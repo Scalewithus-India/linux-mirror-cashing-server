@@ -11,6 +11,7 @@ import (
 
 var persistKeys = []string{
 	"hits_s3",
+	"hits_disk",
 	"misses_stored",
 	"misses_store_failed",
 	"upstream_errors",
@@ -21,10 +22,12 @@ var persistKeys = []string{
 	"package_conflicts",
 	"bytes_served",
 	"inflight_peak",
+	"disk_evictions",
 }
 
 type Metrics struct {
 	HitsS3            atomic.Int64
+	HitsDisk          atomic.Int64
 	MissesStored      atomic.Int64
 	MissesStoreFailed atomic.Int64
 	UpstreamErrors    atomic.Int64
@@ -35,6 +38,7 @@ type Metrics struct {
 	PackageConflicts  atomic.Int64
 	BytesServed       atomic.Int64
 	InflightPeak      atomic.Int64
+	DiskEvictions     atomic.Int64
 
 	dirty atomic.Bool
 
@@ -50,6 +54,8 @@ func (m *Metrics) Incr(name string, n int64) {
 	switch name {
 	case "hits_s3":
 		m.HitsS3.Add(n)
+	case "hits_disk":
+		m.HitsDisk.Add(n)
 	case "misses_stored":
 		m.MissesStored.Add(n)
 	case "misses_store_failed":
@@ -68,6 +74,8 @@ func (m *Metrics) Incr(name string, n int64) {
 		m.PackageConflicts.Add(n)
 	case "bytes_served":
 		m.BytesServed.Add(n)
+	case "disk_evictions":
+		m.DiskEvictions.Add(n)
 	}
 	cur := m.inflight.Load()
 	for {
@@ -108,6 +116,7 @@ func (m *Metrics) SetValidatedEntries(n int64) { m.validatedEntries.Store(n) }
 func (m *Metrics) Snapshot() map[string]any {
 	return map[string]any{
 		"hits_s3":                m.HitsS3.Load(),
+		"hits_disk":              m.HitsDisk.Load(),
 		"misses_stored":          m.MissesStored.Load(),
 		"misses_store_failed":    m.MissesStoreFailed.Load(),
 		"upstream_errors":        m.UpstreamErrors.Load(),
@@ -121,12 +130,14 @@ func (m *Metrics) Snapshot() map[string]any {
 		"inflight_peak":          m.InflightPeak.Load(),
 		"negative_cache_entries": m.negEntries.Load(),
 		"validated_entries":      m.validatedEntries.Load(),
+		"disk_evictions":         m.DiskEvictions.Load(),
 	}
 }
 
 func (m *Metrics) persistable() map[string]any {
 	return map[string]any{
 		"hits_s3":             m.HitsS3.Load(),
+		"hits_disk":           m.HitsDisk.Load(),
 		"misses_stored":       m.MissesStored.Load(),
 		"misses_store_failed": m.MissesStoreFailed.Load(),
 		"upstream_errors":     m.UpstreamErrors.Load(),
@@ -137,6 +148,7 @@ func (m *Metrics) persistable() map[string]any {
 		"package_conflicts":   m.PackageConflicts.Load(),
 		"bytes_served":        m.BytesServed.Load(),
 		"inflight_peak":       m.InflightPeak.Load(),
+		"disk_evictions":      m.DiskEvictions.Load(),
 	}
 }
 
@@ -165,6 +177,8 @@ func (m *Metrics) LoadFromDisk(path string) bool {
 		switch key {
 		case "hits_s3":
 			m.HitsS3.Store(n)
+		case "hits_disk":
+			m.HitsDisk.Store(n)
 		case "misses_stored":
 			m.MissesStored.Store(n)
 		case "misses_store_failed":
@@ -185,6 +199,8 @@ func (m *Metrics) LoadFromDisk(path string) bool {
 			m.BytesServed.Store(n)
 		case "inflight_peak":
 			m.InflightPeak.Store(n)
+		case "disk_evictions":
+			m.DiskEvictions.Store(n)
 		}
 	}
 	m.dirty.Store(false)

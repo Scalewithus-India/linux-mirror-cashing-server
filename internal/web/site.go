@@ -217,16 +217,32 @@ func (s *Site) snap() map[string]any {
 	for k, v := range s.store.Usage.Snapshot(s.cfg.S3QuotaBytes) {
 		snap[k] = v
 	}
+	ds := s.handler.DiskStats()
+	snap["disk_cache_enabled"] = ds.Enabled
+	snap["disk_cache_bytes"] = ds.Bytes
+	snap["disk_cache_objects"] = ds.Objects
+	snap["disk_cache_budget_bytes"] = ds.Budget
+	snap["disk_cache_dir"] = ds.Dir
+	if ds.Evictions > asInt64(snap["disk_evictions"]) {
+		snap["disk_evictions"] = ds.Evictions
+	}
 	return snap
 }
 
 func (s *Site) healthz(w http.ResponseWriter, r *http.Request) {
+	ds := s.handler.DiskStats()
 	out := map[string]any{
-		"status":         "ok",
-		"bucket":         s.cfg.S3Bucket,
-		"tmp_free_bytes":    mirror.TmpFreeBytes(),
-		"inflight":          s.handler.Inflight(),
-		"head_cache_entries": s.handler.HeadCacheLen(),
+		"status":                 "ok",
+		"bucket":                 s.cfg.S3Bucket,
+		"tmp_free_bytes":         mirror.TmpFreeBytes(),
+		"inflight":               s.handler.Inflight(),
+		"head_cache_entries":     s.handler.HeadCacheLen(),
+		"disk_cache_enabled":     ds.Enabled,
+		"disk_cache_bytes":       ds.Bytes,
+		"disk_cache_objects":     ds.Objects,
+		"disk_cache_budget_bytes": ds.Budget,
+		"disk_cache_dir":         ds.Dir,
+		"disk_evictions":         ds.Evictions,
 	}
 	for k, v := range s.store.Usage.Snapshot(s.cfg.S3QuotaBytes) {
 		out[k] = v
@@ -359,6 +375,10 @@ func (s *Site) metricsPage(w http.ResponseWriter, r *http.Request) {
 	d.S3ObjsFmt = fmtInt(s3Objs)
 	d.MixNote = fmt.Sprintf("%s hits · %s misses stored", d.HitsFmt, d.MissesFmt)
 	d.Details = []detailItem{
+		{"m-disk", "Disk hits", fmtInt(asInt64(snap["hits_disk"])), ""},
+		{"m-disk-bytes", "Disk cache size", fmtBytes(asInt64(snap["disk_cache_bytes"])), ""},
+		{"m-disk-budget", "Disk cache budget", fmtBytes(asInt64(snap["disk_cache_budget_bytes"])), ""},
+		{"m-disk-objs", "Disk objects", fmtInt(asInt64(snap["disk_cache_objects"])), ""},
 		{"m-reval", "Revalidated 304", fmtInt(asInt64(snap["revalidated_304"])), ""},
 		{"m-range", "Range / 206", fmtInt(asInt64(snap["range_hits"])), ""},
 		{"m-neg", "Negative cache hits", fmtInt(asInt64(snap["negative_hits"])), ""},

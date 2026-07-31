@@ -160,6 +160,9 @@ func (h *Handler) uploadSpool(ctx context.Context, key, tmpPath, ctype string, s
 		if existing.ContentLength != size {
 			h.metrics.Incr("package_conflicts", 1)
 			h.heads.Delete(key)
+			if h.disk != nil {
+				h.disk.Delete(key)
+			}
 			slog.Warn("PACKAGE CONFLICT", "bucket", h.store.Bucket, "key", key,
 				"existing", existing.ContentLength, "new", size)
 			return "MISS-STORE-SKIPPED-CONFLICT", nil
@@ -183,6 +186,7 @@ func (h *Handler) uploadSpool(ctx context.Context, key, tmpPath, ctype string, s
 	if upstream.IsMetadataKey(key) {
 		h.markValidated(key)
 	}
+	h.populateDiskFile(key, ctype, tmpPath, size)
 	return "MISS-STORED", nil
 }
 

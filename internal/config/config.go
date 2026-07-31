@@ -28,6 +28,11 @@ type Config struct {
 	MaxUpstreamErrorBytes int64
 	HeadCacheMax          int
 
+	// Local disk cache: Dir empty disables. Bytes nil = auto; *0 = off; >0 = fixed cap.
+	LocalCacheDir           string
+	LocalCacheReserveBytes  int64
+	LocalCacheBytes         *int64
+
 	MetricsStatePath    string
 	MetricsFlushSeconds time.Duration
 
@@ -62,14 +67,16 @@ func Load() (*Config, error) {
 		MaxConcurrentSpools:   getenvInt("MAX_CONCURRENT_SPOOLS", 3),
 		MinTmpFreeBytes:       getenvInt64("MIN_TMP_FREE_BYTES", 512*1024*1024),
 		MaxUpstreamErrorBytes: getenvInt64("MAX_UPSTREAM_ERROR_BYTES", 64*1024),
-		HeadCacheMax:          getenvInt("HEAD_CACHE_MAX", 50000),
-		MetricsStatePath:      getenv("METRICS_STATE_PATH", "/var/lib/linux-mirror/metrics.json"),
-		MetricsFlushSeconds:   time.Duration(getenvFloat("METRICS_FLUSH_SECONDS", 10)) * time.Second,
-		LogLevel:              strings.ToUpper(getenv("LOG_LEVEL", "INFO")),
-		Listen:                getenv("LISTEN", ":8080"),
-		WebRoot:               getenv("WEB_ROOT", "web"),
-		DocsRoot:              getenv("DOCS_ROOT", "docs"),
-		ScriptsRoot:           getenv("SCRIPTS_ROOT", "scripts"),
+		HeadCacheMax:           getenvInt("HEAD_CACHE_MAX", 50000),
+		LocalCacheDir:          getenv("LOCAL_CACHE_DIR", "/app/data/cache"),
+		LocalCacheReserveBytes: getenvInt64("LOCAL_CACHE_RESERVE_BYTES", 15*1024*1024*1024),
+		MetricsStatePath:       getenv("METRICS_STATE_PATH", "/var/lib/linux-mirror/metrics.json"),
+		MetricsFlushSeconds:    time.Duration(getenvFloat("METRICS_FLUSH_SECONDS", 10)) * time.Second,
+		LogLevel:               strings.ToUpper(getenv("LOG_LEVEL", "INFO")),
+		Listen:                 getenv("LISTEN", ":8080"),
+		WebRoot:                getenv("WEB_ROOT", "web"),
+		DocsRoot:               getenv("DOCS_ROOT", "docs"),
+		ScriptsRoot:            getenv("SCRIPTS_ROOT", "scripts"),
 	}
 	if raw := strings.TrimSpace(os.Getenv("S3_QUOTA_BYTES")); raw != "" {
 		v, err := strconv.ParseInt(raw, 10, 64)
@@ -77,6 +84,14 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("S3_QUOTA_BYTES: %w", err)
 		}
 		cfg.S3QuotaBytes = &v
+	}
+	// LOCAL_CACHE_BYTES: unset/empty = auto; 0 = disabled; >0 = fixed cap
+	if raw := strings.TrimSpace(os.Getenv("LOCAL_CACHE_BYTES")); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("LOCAL_CACHE_BYTES: %w", err)
+		}
+		cfg.LocalCacheBytes = &v
 	}
 	if cfg.MaxConcurrentSpools < 1 {
 		cfg.MaxConcurrentSpools = 1

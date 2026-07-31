@@ -41,15 +41,18 @@ Caddy obtains and renews the certificate automatically. Cert data lives in the `
 
 HTTP on port 80 is used for ACME challenges and redirects to HTTPS.
 
-Response header `X-Cache` values include `HIT-S3`, `MISS-STORED`, `NEGATIVE`, `DIR-DISABLED` for debugging. Metrics: `https://mirror.scalewithus.com/metrics`.
+Response header `X-Cache` values include `HIT-DISK`, `HIT-S3`, `MISS-STORED`, `NEGATIVE`, `DIR-DISABLED` for debugging. Metrics: `https://mirror.scalewithus.com/metrics`.
+
+Local disk cache lives in `./data/cache` (gitignored), sized automatically from free disk minus a 15 GiB reserve.
 
 ### Layout
 
 | Path | Role |
 |------|------|
 | `cmd/mirror/` | Process entrypoint |
-| `internal/{config,upstream,store,mirror,metrics,web}/` | Config, S3, cache logic, site |
+| `internal/{config,upstream,store,mirror,diskcache,metrics,web}/` | Config, S3, disk+S3 cache, site |
 | `web/{templates,static}/` | HTML + assets |
+| `data/cache/` | Local NVMe object cache (not in git) |
 | `docs/`, `scripts/` | Guides and `switch-mirror.sh` |
 
 ---
@@ -189,6 +192,9 @@ https://mirror.scalewithus.com/alpine/v3.21/community
 | `MAX_SPOOL_BYTES` | `2GiB` | Reject oversized upstream objects |
 | `MAX_CONCURRENT_SPOOLS` | `3` | Cap concurrent upstream→tmp→S3 fetches |
 | `HEAD_CACHE_MAX` | `50000` | In-memory S3 head cache entries (skip HeadObject on hot hits) |
+| `LOCAL_CACHE_DIR` | `/app/data/cache` | Local disk cache root (`./data/cache` on host) |
+| `LOCAL_CACHE_RESERVE_BYTES` | `15GiB` | Free space kept for OS when auto-sizing cache |
+| `LOCAL_CACHE_BYTES` | *(auto)* | Fixed cap; empty = free−reserve; `0` = disable disk cache |
 | `LISTEN` | `:8080` | HTTP listen address (container) |
 | `MIN_TMP_FREE_BYTES` | `512MiB` | Fail miss if `/tmp` is too full |
 | `UPSTREAM_TIMEOUT` | `120` | Upstream HTTP timeout (seconds) |

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/config"
+	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/diskcache"
 	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/metrics"
 	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/mirror"
 	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/store"
@@ -54,7 +55,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	mh := mirror.New(cfg, st, m)
+	disk, err := diskcache.New(cfg.LocalCacheDir, cfg.LocalCacheReserveBytes, cfg.LocalCacheBytes)
+	if err != nil {
+		slog.Error("disk cache", "err", err)
+		os.Exit(1)
+	}
+
+	mh := mirror.New(cfg, st, m, disk)
 	site, err := web.New(cfg, st, m, mh)
 	if err != nil {
 		slog.Error("web", "err", err)

@@ -21,11 +21,15 @@ services:
       S3_QUOTA_BYTES: ${S3_QUOTA_BYTES:-}
       METRICS_STATE_PATH: ${METRICS_STATE_PATH:-/var/lib/linux-mirror/metrics.json}
       METRICS_FLUSH_SECONDS: ${METRICS_FLUSH_SECONDS:-10}
+      LOCAL_CACHE_DIR: /app/data/cache
+      LOCAL_CACHE_RESERVE_BYTES: ${LOCAL_CACHE_RESERVE_BYTES:-16106127360}
+      LOCAL_CACHE_BYTES: ${LOCAL_CACHE_BYTES:-}
     # Only reachable on the compose network; Caddy publishes 80/443
     expose:
       - "8080"
     volumes:
       - mirror_data:/var/lib/linux-mirror
+      - ./data/cache:/app/data/cache
     tmpfs:
       - /tmp:size=8g
     healthcheck:

@@ -12,7 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"io"
+
 	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/config"
+	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/diskcache"
 	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/metrics"
 	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/store"
 	"github.com/Scalewithus-India/linux-mirror-cashing-server/internal/upstream"
@@ -26,6 +29,7 @@ type Handler struct {
 	cfg        *config.Config
 	store      *store.Store
 	metrics    *metrics.Metrics
+	disk       *diskcache.Cache
 	httpClient *http.Client
 	spoolSem   chan struct{}
 	heads      *headCache
@@ -44,7 +48,7 @@ type Handler struct {
 	validated map[string]time.Time
 }
 
-func New(cfg *config.Config, st *store.Store, m *metrics.Metrics) *Handler {
+func New(cfg *config.Config, st *store.Store, m *metrics.Metrics, disk *diskcache.Cache) *Handler {
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -59,23 +63,27 @@ func New(cfg *config.Config, st *store.Store, m *metrics.Metrics) *Handler {
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: cfg.UpstreamTimeout,
 	}
+	if disk != nil {
+		disk.OnEvict = func() { m.Incr("disk_evictions", 1) }
+	}
 	return &Handler{
-		cfg:   cfg,
-		store: st,
+		cfg:    cfg,
+		store:  st,
 		metrics: m,
+		disk:   disk,
 		httpClient: &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 			Transport: transport,
 		},
-		spoolSem: make(chan struct{}, cfg.MaxConcurrentSpools),
-		heads:    newHeadCache(cfg.HeadCacheMax),
-		metaCC:   fmt.Sprintf("public, max-age=%d", cfg.MetadataCacheSeconds),
-		pkgCC:    fmt.Sprintf("public, max-age=%d, immutable", cfg.PackageCacheSeconds),
-		negCC:    fmt.Sprintf("public, max-age=%d", cfg.NegativeCacheSeconds),
-		inflight: make(map[string]*flight),
-		negative: make(map[string]time.Time),
+		spoolSem:  make(chan struct{}, cfg.MaxConcurrentSpools),
+		heads:     newHeadCache(cfg.HeadCacheMax),
+		metaCC:    fmt.Sprintf("public, max-age=%d", cfg.MetadataCacheSeconds),
+		pkgCC:     fmt.Sprintf("public, max-age=%d, immutable", cfg.PackageCacheSeconds),
+		negCC:     fmt.Sprintf("public, max-age=%d", cfg.NegativeCacheSeconds),
+		inflight:  make(map[string]*flight),
+		negative:  make(map[string]time.Time),
 		validated: make(map[string]time.Time),
 	}
 }
@@ -87,6 +95,13 @@ func (h *Handler) Inflight() int {
 }
 
 func (h *Handler) HeadCacheLen() int { return h.heads.Len() }
+
+func (h *Handler) DiskStats() diskcache.Stats {
+	if h.disk == nil {
+		return diskcache.Stats{Enabled: false}
+	}
+	return h.disk.Stats()
+}
 
 func (h *Handler) cacheControl(key string) string {
 	if upstream.IsMetadataKey(key) {
@@ -209,6 +224,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	if h.tryDisk(w, r, key, rangeHeader) {
+		return
+	}
+
 	// Packages are immutable: skip HeadObject when possible (one RTT instead of two).
 	if !upstream.IsMetadataKey(key) {
 		if head := h.heads.Get(key); head != nil {
@@ -267,6 +286,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Info("S3 stale metadata, re-fetching", "key", key)
 		h.heads.Delete(key)
+		if h.disk != nil {
+			h.disk.Delete(key)
+		}
 	} else if err != nil && !store.IsNotFound(err) {
 		slog.Debug("S3 head", "key", key, "err", err)
 		head = nil
@@ -281,11 +303,108 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.fetchUpstreamAndCache(w, r, key, upstreamURL, head, rangeHeader)
 }
 
+func (h *Handler) tryDisk(w http.ResponseWriter, r *http.Request, key, rangeHeader string) bool {
+	if h.disk == nil || !h.disk.Enabled() {
+		return false
+	}
+	obj, err := h.disk.Lookup(key)
+	if err != nil {
+		return false
+	}
+	defer obj.File.Close()
+
+	if upstream.IsMetadataKey(key) {
+		ttl := time.Duration(h.cfg.MetadataCacheSeconds) * time.Second
+		if time.Since(obj.ModTime) > ttl {
+			h.disk.Delete(key)
+			return false
+		}
+	}
+	if head := h.heads.Get(key); head != nil && head.ContentLength > 0 && head.ContentLength != obj.Size {
+		h.disk.Delete(key)
+		return false
+	}
+
+	ctype := upstream.ResponseContentType(key, obj.CType)
+	start, end, err := parseBytesRange(rangeHeader, obj.Size)
+	if errors.Is(err, errUnsatisfiableRange) {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", obj.Size))
+		w.Header().Set("X-Cache", "HIT-DISK")
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return true
+	}
+	if err != nil {
+		start, end = -1, -1
+	}
+
+	w.Header().Set("Cache-Control", h.cacheControl(key))
+	w.Header().Set("X-Cache", "HIT-DISK")
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Type", ctype)
+	h.rememberHead(key, &store.ObjectHead{
+		ContentLength: obj.Size,
+		ContentType:   ctype,
+		LastModified:  obj.ModTime.UTC(),
+	})
+
+	if r.Method == http.MethodHead {
+		if start < 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(obj.Size, 10))
+			h.metrics.Incr("hits_disk", 1)
+			w.WriteHeader(http.StatusOK)
+			return true
+		}
+		length := end - start + 1
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, obj.Size))
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+		h.metrics.Incr("hits_disk", 1)
+		h.metrics.Incr("range_hits", 1)
+		w.WriteHeader(http.StatusPartialContent)
+		return true
+	}
+
+	if start < 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(obj.Size, 10))
+		h.metrics.Incr("hits_disk", 1)
+		h.metrics.Incr("bytes_served", obj.Size)
+		_, _ = copyBuf(w, obj.File)
+		return true
+	}
+	length := end - start + 1
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, obj.Size))
+	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+	h.metrics.Incr("hits_disk", 1)
+	h.metrics.Incr("range_hits", 1)
+	h.metrics.Incr("bytes_served", length)
+	w.WriteHeader(http.StatusPartialContent)
+	_, _ = copyBuf(w, io.NewSectionReader(obj.File, start, length))
+	return true
+}
+
+func (h *Handler) populateDisk(key, ctype string, size int64, body io.Reader) {
+	if h.disk == nil || !h.disk.Enabled() || size <= 0 {
+		return
+	}
+	if err := h.disk.PutReader(key, ctype, body, size); err != nil {
+		slog.Debug("disk cache populate failed", "key", key, "err", err)
+	}
+}
+
+func (h *Handler) populateDiskFile(key, ctype, path string, size int64) {
+	if h.disk == nil || !h.disk.Enabled() || size <= 0 {
+		return
+	}
+	if err := h.disk.PutFile(key, ctype, path, size); err != nil {
+		slog.Debug("disk cache put file failed", "key", key, "err", err)
+	}
+}
+
 // tryPackageGet streams from S3 without a prior Head. Returns false on miss.
 func (h *Handler) tryPackageGet(w http.ResponseWriter, r *http.Request, key, rangeHeader string) bool {
 	ctx := r.Context()
 	byteRange := ""
-	if rangeHeader != "" && !strings.Contains(rangeHeader, ",") {
+	wantRange := rangeHeader != "" && !strings.Contains(rangeHeader, ",")
+	if wantRange {
 		byteRange = strings.TrimSpace(rangeHeader)
 	}
 	res, err := h.store.Get(ctx, key, byteRange)
@@ -331,7 +450,22 @@ func (h *Handler) tryPackageGet(w http.ResponseWriter, r *http.Request, key, ran
 	if res.StatusCode == http.StatusPartialContent {
 		w.WriteHeader(http.StatusPartialContent)
 	}
-	_, _ = copyBuf(w, res.Body)
+
+	src := io.Reader(res.Body)
+	var pw *io.PipeWriter
+	if !wantRange && res.StatusCode == http.StatusOK && head.ContentLength > 0 {
+		pr, pww := io.Pipe()
+		pw = pww
+		go func() {
+			h.populateDisk(key, ctype, head.ContentLength, pr)
+			_ = pr.Close()
+		}()
+		src = io.TeeReader(res.Body, pw)
+	}
+	_, _ = copyBuf(w, src)
+	if pw != nil {
+		_ = pw.Close()
+	}
 	return true
 }
 
@@ -409,6 +543,9 @@ func (h *Handler) revalidateMetadata(ctx context.Context, key, upstreamURL strin
 	case resp.StatusCode == http.StatusNotFound:
 		h.rememberNegative(key)
 		h.heads.Delete(key)
+		if h.disk != nil {
+			h.disk.Delete(key)
+		}
 		return false
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		slog.Warn("revalidate redirect — keeping S3 copy", "status", resp.StatusCode, "key", key)
@@ -477,6 +614,9 @@ func (h *Handler) streamS3(w http.ResponseWriter, r *http.Request, key string, h
 	if err != nil {
 		if store.IsNotFound(err) {
 			h.heads.Delete(key)
+			if h.disk != nil {
+				h.disk.Delete(key)
+			}
 		}
 		http.Error(w, "S3 get failed\n", http.StatusBadGateway)
 		return
@@ -485,7 +625,21 @@ func (h *Handler) streamS3(w http.ResponseWriter, r *http.Request, key string, h
 	if start >= 0 {
 		w.WriteHeader(http.StatusPartialContent)
 	}
-	_, _ = copyBuf(w, res.Body)
+	src := io.Reader(res.Body)
+	var pw *io.PipeWriter
+	if start < 0 && size > 0 {
+		pr, pww := io.Pipe()
+		pw = pww
+		go func() {
+			h.populateDisk(key, ctype, size, pr)
+			_ = pr.Close()
+		}()
+		src = io.TeeReader(res.Body, pw)
+	}
+	_, _ = copyBuf(w, src)
+	if pw != nil {
+		_ = pw.Close()
+	}
 }
 
 func (h *Handler) headResponseS3(w http.ResponseWriter, key string, head *store.ObjectHead, rangeHeader string) {
@@ -523,6 +677,9 @@ func (h *Handler) fetchUpstreamAndCache(w http.ResponseWriter, r *http.Request, 
 	if f, ok := h.inflight[key]; ok {
 		h.flightMu.Unlock()
 		<-f.done
+		if h.tryDisk(w, r, key, rangeHeader) {
+			return
+		}
 		if head := h.heads.Get(key); head != nil {
 			h.streamS3(w, r, key, head, rangeHeader)
 			return
