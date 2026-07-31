@@ -1,0 +1,48 @@
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-rise { animation: rise 0.7s ease both; }
+
+/* Guide markdown / code blocks */
+.guide-md .code-block { position: relative; margin: 1rem 0; }
+.guide-md .code-block pre {
+  margin: 0;
+  padding: 2.4rem 1rem 0.95rem;
+  overflow-x: auto;
+  border-radius: 0.35rem;
+  background: #0a0f0d;
+  border: 1px solid #24332c;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.guide-md .copy-btn {
+  position: absolute; top: 0.45rem; right: 0.45rem; z-index: 2;
+  appearance: none; cursor: pointer;
+  font-family: "Sora", system-ui, sans-serif;
+  font-size: 0.72rem; font-weight: 600;
+  padding: 0.28rem 0.65rem; border-radius: 0.25rem;
+  color: #e8f0ea; background: rgba(20, 40, 30, 0.92);
+  border: 1px solid #24332c;
+}
+.guide-md .copy-btn:hover { border-color: #1f6b4a; color: #3dd68c; }
+.guide-md .copy-btn.copied { color: #062015; background: #3dd68c; border-color: #3dd68c; }
+.guide-md .lang-tag {
+  position: absolute; top: 0.55rem; left: 0.7rem; z-index: 1;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.68rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #8fa396;
+}
+.guide-md blockquote {
+  margin: 1rem 0; padding: 0.7rem 1rem;
+  border-left: 3px solid #e6b35c;
+  background: rgba(230, 179, 92, 0.08); color: #ecd9b0;
+}
+.hljs { background: transparent !important; color: #d6e4db; }
+.hljs-comment, .hljs-quote { color: #6f8578; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal { color: #7dffc0; }
+.hljs-string, .hljs-doctag { color: #e6b35c; }
+.hljs-number, .hljs-bullet { color: #8ecbff; }
+.hljs-built_in, .hljs-type, .hljs-attr { color: #9ad4b5; }
+.hljs-title, .hljs-section { color: #cfe8d8; font-weight: 600; }

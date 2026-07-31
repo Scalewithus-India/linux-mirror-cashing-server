@@ -14,6 +14,8 @@ COPY app/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/main.py app/webpages.py ./
+COPY app/templates ./templates
+COPY app/static ./static
 COPY docs ./docs
 COPY scripts ./scripts
 

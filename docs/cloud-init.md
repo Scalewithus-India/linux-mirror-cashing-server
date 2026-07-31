@@ -18,19 +18,20 @@ Wait for first boot before running package tools manually: `cloud-init status --
 
 ## Per OS
 
-Ordered to match common product OS groups:
-
 | OS | Doc |
 |----|-----|
 | Live switch (all Linux distros) | [switch.md](cloud-init/switch.md) |
-| Windows | [windows.md](cloud-init/windows.md) (docs only — not a package mirror) |
-| Ubuntu (amd64 + arm64/ports) | [ubuntu.md](cloud-init/ubuntu.md) |
+| Windows | [windows.md](cloud-init/windows.md) (docs only) |
+| Ubuntu | [ubuntu.md](cloud-init/ubuntu.md) |
 | Alpine Linux | [alpine.md](cloud-init/alpine.md) |
 | CentOS (Stream) | [centos-stream.md](cloud-init/centos-stream.md) |
 | Debian | [debian.md](cloud-init/debian.md) |
+| AlmaLinux 8 | [almalinux-8.md](cloud-init/almalinux-8.md) |
 | AlmaLinux 9 | [almalinux.md](cloud-init/almalinux.md) |
 | AlmaLinux 10 | [almalinux-10.md](cloud-init/almalinux-10.md) |
+| Rocky Linux 8 | [rocky-8.md](cloud-init/rocky-8.md) |
 | Rocky Linux 9 | [rocky.md](cloud-init/rocky.md) |
+| Rocky Linux 10 | [rocky-10.md](cloud-init/rocky-10.md) |
 | Arch Linux | [arch.md](cloud-init/arch.md) |
 | cPanel / WHM (FastUpdate) | [cpanel.md](cloud-init/cpanel.md) |
 

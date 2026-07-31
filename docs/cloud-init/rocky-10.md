@@ -1,6 +1,6 @@
-# Rocky Linux 9 — cloud-init
+# Rocky Linux 10 — cloud-init
 
-For Rocky 8 see [rocky-8.md](rocky-8.md); for 10 see [rocky-10.md](rocky-10.md).
+For Rocky 8 see [rocky-8.md](rocky-8.md); for 9 see [rocky.md](rocky.md).
 
 Mirror: `https://mirror.scalewithus.com`
 

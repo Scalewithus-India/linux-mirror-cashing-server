@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="animate-rise py-12 pb-8">
+  <h1 class="font-display text-[clamp(2.1rem,5vw,3.4rem)] font-medium leading-[1.08] tracking-tight text-ink">
+    Linux package mirror,<br />cached on demand.
+  </h1>
+  <p class="mt-4 max-w-xl text-lg text-muted">
+    Replace upstream URLs with this host. First hit fetches from the official archive and stores in S3; later hits are served from cache.
+  </p>
+  <div class="mt-6 flex flex-wrap gap-3">
+    <a href="/guides/switch" class="inline-flex items-center rounded bg-accent px-4 py-2.5 text-sm font-semibold text-[#062015] no-underline transition hover:-translate-y-px hover:bg-[#7dffc0]">Switch live server</a>
+    <a href="/guides" class="inline-flex items-center rounded border border-line px-4 py-2.5 text-sm font-semibold text-ink no-underline transition hover:border-accent-dim hover:text-accent">Setup guides</a>
+    <a href="/metrics" class="inline-flex items-center rounded border border-line px-4 py-2.5 text-sm font-semibold text-ink no-underline transition hover:border-accent-dim hover:text-accent">Live metrics</a>
+  </div>
+</section>
+
+<section class="animate-rise pb-10">
+  <h2 class="mb-4 font-display text-2xl font-medium tracking-tight">Mirror prefixes</h2>
+  <ul class="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2 p-0">
+    {% for p in paths %}
+    <li class="rounded border border-line bg-black/20 px-3 py-2 font-mono text-sm text-muted">{{ p }}</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="animate-rise pb-12">
+  <h2 class="mb-4 font-display text-2xl font-medium tracking-tight">Guides</h2>
+  <div class="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3">
+    {% for g in guides %}
+    <a href="/guides/{{ g.slug }}" class="block rounded-lg border border-line bg-[rgba(8,14,11,0.55)] px-4 py-4 text-inherit no-underline transition hover:-translate-y-0.5 hover:border-accent-dim">
+      <strong class="mb-1 block text-ink">{{ g.title }}</strong>
+      <span class="text-sm text-muted">{{ g.blurb }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

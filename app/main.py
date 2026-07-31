@@ -24,9 +24,11 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from webpages import guide_page, guides_index_page, home_page, metrics_page
 
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 def _switch_mirror_script_path() -> Path:
     here = Path(__file__).resolve().parent
     for candidate in (here / "scripts" / "switch-mirror.sh", here.parent / "scripts" / "switch-mirror.sh"):
@@ -489,6 +491,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="ScaleWithUs Linux Mirror", lifespan=lifespan)
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 @app.middleware("http")
@@ -534,7 +538,7 @@ async def metrics_endpoint(request: Request):
     accept = (request.headers.get("accept") or "").lower()
     if "application/json" in accept and "text/html" not in accept:
         return JSONResponse(snap)
-    return metrics_page(snap, bucket=S3_BUCKET)
+    return metrics_page(request, snap, bucket=S3_BUCKET)
 
 
 @app.get("/api/metrics")
@@ -560,7 +564,7 @@ async def root(request: Request):
                 "switch_script": "/switch-mirror.sh",
             }
         )
-    return home_page([p for p, _ in UPSTREAMS])
+    return home_page(request, [p for p, _ in UPSTREAMS])
 
 
 @app.get("/api")
@@ -592,13 +596,13 @@ async def switch_mirror_script():
 
 
 @app.api_route("/guides", methods=["GET", "HEAD"], response_class=HTMLResponse)
-async def guides_index():
-    return guides_index_page()
+async def guides_index(request: Request):
+    return guides_index_page(request)
 
 
 @app.api_route("/guides/{slug}", methods=["GET", "HEAD"], response_class=HTMLResponse)
-async def guides_detail(slug: str):
-    page = guide_page(slug)
+async def guides_detail(request: Request, slug: str):
+    page = guide_page(request, slug)
     if page is None:
         return Response(
             status_code=404,

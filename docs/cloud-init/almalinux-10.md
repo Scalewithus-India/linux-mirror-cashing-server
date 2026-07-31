@@ -2,7 +2,7 @@
 
 Mirror: `https://mirror.scalewithus.com`
 
-For AlmaLinux 9 see [almalinux.md](almalinux.md).
+For AlmaLinux 8 see [almalinux-8.md](almalinux-8.md); for 9 see [almalinux.md](almalinux.md).
 
 Alma 10 ships **split** repo files (`almalinux-baseos.repo`, `almalinux-appstream.repo`, …). Overwrite those with `write_files` — do **not** create a combined `almalinux.repo` (duplicate IDs for `baseos` / `appstream` / `crb`).
 
