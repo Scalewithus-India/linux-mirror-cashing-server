@@ -13,7 +13,8 @@ RUN apt-get update \
 COPY app/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app/main.py .
+COPY app/main.py app/webpages.py ./
+COPY docs ./docs
 
 EXPOSE 8080
 

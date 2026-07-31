@@ -21,7 +21,9 @@ import httpx
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+
+from webpages import guide_page, guides_index_page, home_page
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -334,14 +336,49 @@ async def metrics_endpoint():
     return JSONResponse(snap)
 
 
-@app.get("/")
-async def root():
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def root(request: Request):
+    # JSON for API clients / curl Accept
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept and "text/html" not in accept:
+        return JSONResponse(
+            {
+                "mirror": "mirror.scalewithus.com",
+                "paths": [p for p, _ in UPSTREAMS],
+                "cache": "s3-on-demand",
+                "metrics": "/metrics",
+                "guides": "/guides",
+            }
+        )
+    return home_page([p for p, _ in UPSTREAMS])
+
+
+@app.get("/api")
+async def api_root():
     return {
         "mirror": "mirror.scalewithus.com",
         "paths": [p for p, _ in UPSTREAMS],
         "cache": "s3-on-demand",
         "metrics": "/metrics",
+        "guides": "/guides",
     }
+
+
+@app.api_route("/guides", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def guides_index():
+    return guides_index_page()
+
+
+@app.api_route("/guides/{slug}", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def guides_detail(slug: str):
+    page = guide_page(slug)
+    if page is None:
+        return Response(
+            status_code=404,
+            content=b"Guide not found. See /guides\n",
+            media_type="text/plain",
+        )
+    return page
 
 
 async def stream_s3(

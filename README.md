@@ -42,7 +42,7 @@ Response header `X-Cache` values include `HIT-S3`, `MISS-STORED`, `NEGATIVE`, `B
 
 ## Client configuration
 
-Full per-OS cloud-init / client snippets: [docs/cloud-init.md](docs/cloud-init.md) (index) — e.g. [AlmaLinux 9](docs/cloud-init/almalinux.md), [AlmaLinux 10](docs/cloud-init/almalinux-10.md), [Ubuntu](docs/cloud-init/ubuntu.md), [cPanel](docs/cloud-init/cpanel.md).
+Full per-OS cloud-init / client snippets: [https://mirror.scalewithus.com/guides](https://mirror.scalewithus.com/guides) (also [docs/cloud-init.md](docs/cloud-init.md)).
 
 Use `https://mirror.scalewithus.com` (TLS via Let's Encrypt).
 
