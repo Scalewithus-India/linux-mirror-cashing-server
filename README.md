@@ -1,200 +1,344 @@
-# ScaleWithUs Linux Mirror (on-demand S3 cache)
+# ScaleWithUs Linux Mirror
 
 [![GitHub stars](https://img.shields.io/github/stars/Scalewithus-India/linux-mirror-cashing-server?style=social)](https://github.com/Scalewithus-India/linux-mirror-cashing-server)
 
 Source: [github.com/Scalewithus-India/linux-mirror-cashing-server](https://github.com/Scalewithus-India/linux-mirror-cashing-server)
 
-Docker service for `https://mirror.scalewithus.com`. Caddy terminates TLS (Let's Encrypt); a Go mirror process caches objects in S3 on demand (same key layout as the previous Python service, so existing cache remains valid).
+Production instance: **https://mirror.scalewithus.com**
 
-## Paths
+## What this repo does
 
-| Prefix | Upstream | Notes |
-|--------|----------|--------|
-| `/ubuntu/` | archive.ubuntu.com | amd64/i386 |
-| `/ubuntu-ports/` | ports.ubuntu.com | arm64, armhf, etc. |
-| `/ubuntu-security/` | security.ubuntu.com | optional; archive often suffices |
-| `/debian/` | deb.debian.org | main, updates, backports |
-| `/debian-security/` | security.debian.org | security pocket |
-| `/almalinux/` | repo.almalinux.org | set explicit baseurl |
-| `/rocky/` | dl.rockylinux.org | set explicit baseurl |
-| `/centos-stream/` | mirror.stream.centos.org | CentOS Stream 9/10 (not EOL CentOS Linux) |
-| `/alpine/` | dl-cdn.alpinelinux.org/alpine | apk main/community (and edge) |
-| `/epel/` | download.fedoraproject.org/pub/epel | for EL clients |
-| `/archlinux/` | geo.mirror.pkgbuild.com | official x86_64 repos |
-| `/cpanel/` | httpupdate.cpanel.net | also `httpupdate.scalewithus.com` or hosts→`httpupdate.cpanel.net` |
+This is an **on-demand caching mirror** for Linux (and cPanel) package trees. It is **not** a full rsync mirror that pre-downloads entire distros.
 
-## Run (with Let's Encrypt)
+When a client requests a file (for example `/ubuntu/pool/.../foo.deb`):
 
-1. DNS: `mirror.scalewithus.com` and `httpupdate.scalewithus.com` → this host (ports **80** and **443** open).
-2. Set S3 credentials and `ACME_EMAIL` in `.env`.
-3. Start:
+1. **Local disk** (`./data/cache`) — serve immediately if present (`X-Cache: HIT-DISK`).
+2. **S3** — if the object is already in the bucket, stream it (`HIT-S3`) and warm the disk cache.
+3. **Upstream** — on a miss, fetch from the official source, spool to `/tmp`, upload to S3, then serve (`MISS-STORED`). Later requests hit disk or S3.
 
-```bash
-cd ~/linux-mirror
-cp .env.example .env   # if needed; fill credentials + ACME_EMAIL
-sudo docker compose up -d --build
-curl -sI https://mirror.scalewithus.com/healthz
-curl -sI https://mirror.scalewithus.com/ubuntu/dists/noble/InRelease
+So you only store what your clients actually download. Hot packages stay on fast local NVMe/SSD; the durable shared cache is S3 (any S3-compatible API). Caddy sits in front for TLS (Let’s Encrypt) and hostname routing.
+
+```text
+Clients (apt/dnf/apk/pacman/cPanel)
+        │
+        ▼
+   Caddy :80/:443  (TLS, Host rewrites for cPanel)
+        │
+        ▼
+   Go mirror :8080
+        │
+   ┌────┴────┐
+   ▼         ▼
+ Disk     S3 bucket
+ cache    (durable)
+   │         │
+   └────┬────┘
+        ▼ (miss)
+   Official upstreams
+   (Ubuntu, Debian, Alma, …)
 ```
 
-Caddy obtains and renews the certificate automatically. Cert data lives in the `caddy_data` Docker volume.
+### Why run one
 
-HTTP on port 80 is used for ACME challenges and redirects to HTTPS.
+- Pull large packages from a nearby host / your own S3 instead of remote CDNs every time.
+- One mirror URL for many distros (Ubuntu, Debian, Alma, Rocky, EPEL, Alpine, Arch, CentOS Stream, cPanel FastUpdate).
+- Safe defaults: path normalization, no upstream redirect following, directory listings disabled, package size conflicts treated as immutable, spool size and concurrency caps.
 
-Response header `X-Cache` values include `HIT-DISK`, `HIT-S3`, `MISS-STORED`, `NEGATIVE`, `DIR-DISABLED` for debugging. Metrics: `https://mirror.scalewithus.com/metrics`.
+### Request path layout
 
-Local disk cache lives in `./data/cache` (gitignored), sized automatically from free disk minus a 15 GiB reserve.
+Public URLs use a prefix per distro. That prefix maps to an official upstream base URL. S3 object keys match the public path **without** a leading slash (for example `ubuntu/dists/noble/InRelease`).
 
-### Layout
+| Prefix | Upstream |
+|--------|----------|
+| `/ubuntu/` | archive.ubuntu.com |
+| `/ubuntu-ports/` | ports.ubuntu.com |
+| `/ubuntu-security/` | security.ubuntu.com |
+| `/debian/` | deb.debian.org |
+| `/debian-security/` | security.debian.org |
+| `/almalinux/` | repo.almalinux.org |
+| `/rocky/` | dl.rockylinux.org |
+| `/centos-stream/` | mirror.stream.centos.org |
+| `/alpine/` | dl-cdn.alpinelinux.org/alpine |
+| `/epel/` | download.fedoraproject.org/pub/epel |
+| `/archlinux/` | geo.mirror.pkgbuild.com |
+| `/cpanel/` | httpupdate.cpanel.net |
+
+cPanel clients expect files at the **host root** (`/cpanelsync/…`, `/RPM/…`). Caddy rewrites those onto `/cpanel{uri}` for `httpupdate.scalewithus.com` and `http://httpupdate.cpanel.net` (hosts-file override). Use **HTTP** for the cPanel hosts name — you cannot get a TLS cert for `cpanel.net`.
+
+### Cache behaviour (short)
+
+| Header `X-Cache` | Meaning |
+|------------------|---------|
+| `HIT-DISK` | Served from local disk cache |
+| `HIT-S3` | Served from S3 |
+| `MISS-STORED` | Fetched upstream, stored in S3, served |
+| `NEGATIVE` | Recent upstream 404 (short TTL) |
+| `DIR-DISABLED` | Directory listing blocked |
+| `UPSTREAM-REDIRECT` | Upstream returned 3xx (refused) |
+
+- **Metadata** (InRelease, Packages, repomd.xml, …): revalidated on a shorter TTL (default 6h).
+- **Packages** (`.deb`, `.rpm`, …): treated as immutable; long `Cache-Control` (default 6 months).
+- **Disk budget**: by default `free_disk − 15 GiB` under `./data/cache`; set `LOCAL_CACHE_BYTES=0` to disable.
+
+### Repo layout
 
 | Path | Role |
 |------|------|
-| `cmd/mirror/` | Process entrypoint |
-| `internal/{config,upstream,store,mirror,diskcache,metrics,web}/` | Config, S3, disk+S3 cache, site |
-| `web/{templates,static}/` | HTML + assets |
-| `data/cache/` | Local NVMe object cache (not in git) |
-| `docs/`, `scripts/` | Guides and `switch-mirror.sh` |
+| `cmd/mirror/` | Go process entrypoint |
+| `internal/{config,upstream,store,mirror,diskcache,metrics,web}/` | Config, routing, S3, disk cache, HTTP handlers, site |
+| `web/` | HTML templates + static assets |
+| `docs/` | Per-OS client / cloud-init guides (also served at `/guides`) |
+| `scripts/switch-mirror.sh` | Point an existing server at this mirror |
+| `docker-compose.yml` | `mirror` + `caddy` stack |
+| `Caddyfile` | Hostnames, TLS, cPanel rewrites |
+| `data/cache/` | Local object cache on the host (gitignored) |
 
 ---
 
-## Client configuration
+## How to host it
 
-Full per-OS cloud-init / client snippets: [https://mirror.scalewithus.com/guides](https://mirror.scalewithus.com/guides) (also [docs/cloud-init.md](docs/cloud-init.md)).
+### Requirements
 
-Use `https://mirror.scalewithus.com` (TLS via Let's Encrypt).
+| Requirement | Notes |
+|-------------|--------|
+| Linux host | Enough disk for `./data/cache` (NVMe/SSD preferred) + Docker |
+| Docker + Compose | Plugin `docker compose` |
+| Public IPv4 | Ports **80** and **443** reachable from the internet (ACME + clients) |
+| DNS | At least one A/AAAA record for your mirror hostname |
+| S3-compatible bucket | Credentials with read/write on the bucket; path-style addressing supported |
 
-### Switch an existing server
+Suggested sizing: multi-core CPU, ≥4 GiB RAM, tens of GiB free disk for the local cache (the compose stack mounts `./data/cache` and keeps a 15 GiB free-space reserve by default). Spools use a tmpfs `/tmp` (8 GiB in compose) for upstream downloads before S3 upload.
+
+### 1. Clone and configure
 
 ```bash
-curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash
+git clone https://github.com/Scalewithus-India/linux-mirror-cashing-server.git linux-mirror
+cd linux-mirror
+cp .env.example .env
 ```
 
-Optional: `--dry-run`, `--epel`, `--cpanel-hosts`, `--no-makecache`. Details: [https://mirror.scalewithus.com/guides/switch](https://mirror.scalewithus.com/guides/switch).
+Edit `.env` — **required**:
 
-### Ubuntu (amd64) — cloud-init
+```bash
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+S3_ENDPOINT=https://s3.example.com          # your S3 API endpoint
+S3_BUCKET=linux-mirrors
+S3_REGION=us-east-1
+S3_ADDRESSING=path                          # or virtual
+ACME_EMAIL=you@example.com                  # Let's Encrypt account email
+```
+
+Optional but useful:
+
+```bash
+S3_QUOTA_BYTES=10995116277760               # bucket capacity; enables free-space on /metrics
+LOCAL_CACHE_RESERVE_BYTES=16106127360       # keep 15 GiB free on the data volume
+# LOCAL_CACHE_BYTES=0                       # disable disk tier
+# LOCAL_CACHE_BYTES=107374182400            # or fix disk cache at 100 GiB
+```
+
+### 2. DNS
+
+Point records at this host’s public IP:
+
+| Name | Purpose |
+|------|---------|
+| `mirror.example.com` | Main HTTPS mirror (required) |
+| `httpupdate.example.com` | Optional cPanel `HTTPUPDATE` hostname (must resolve) |
+
+If you use names other than `mirror.scalewithus.com` / `httpupdate.scalewithus.com`, edit `Caddyfile` to match **before** starting Compose. Example:
+
+```caddy
+mirror.example.com {
+	import mirror_proxy
+}
+
+http://httpupdate.example.com {
+	rewrite * /cpanel{uri}
+	import mirror_proxy
+}
+
+httpupdate.example.com {
+	rewrite * /cpanel{uri}
+	import mirror_proxy
+}
+
+# Optional: hosts-file clients that keep the official name (HTTP only)
+http://httpupdate.cpanel.net {
+	rewrite * /cpanel{uri}
+	import mirror_proxy
+}
+```
+
+Also update client docs / `switch-mirror.sh` defaults if you publish a public switcher for your own domain.
+
+### 3. Firewall
+
+Allow inbound:
+
+- **80/tcp** — HTTP (ACME HTTP-01 + cPanel FastUpdate)
+- **443/tcp** (and **443/udp** if you want HTTP/3) — HTTPS clients
+
+Do **not** publish the Go app’s `:8080` on the public interface; Compose only `expose`s it to Caddy on the internal network.
+
+### 4. Start the stack
+
+```bash
+sudo docker compose up -d --build
+sudo docker compose ps
+sudo docker compose logs -f mirror caddy
+```
+
+What starts:
+
+| Service | Role |
+|---------|------|
+| `linux-mirror` | Go cache proxy on `:8080` |
+| `linux-mirror-caddy` | Publishes `:80` / `:443`, obtains/renews certs into volume `caddy_data` |
+
+Persistent volumes:
+
+| Volume / path | Contents |
+|---------------|----------|
+| `mirror_data` | Persisted `/metrics` counters (`metrics.json`) |
+| `caddy_data` / `caddy_config` | Certificates and Caddy state |
+| `./data/cache` | Local NVMe/SSD object cache |
+
+### 5. Verify
+
+```bash
+# App health (via HTTPS)
+curl -fsS https://mirror.example.com/healthz
+
+# Metadata pull (should be HIT-S3 or MISS-STORED first time, then HIT-DISK)
+curl -sI https://mirror.example.com/ubuntu/dists/noble/InRelease | grep -iE 'HTTP|x-cache|content-length'
+
+# Metrics JSON
+curl -fsS https://mirror.example.com/metrics | head
+
+# cPanel rewrite (if DNS + Caddyfile configured)
+curl -fsSI http://httpupdate.example.com/cpanelsync/
+```
+
+Expect `X-Cache` values as in the table above. First miss of a large package can take a while (upstream download + S3 put); concurrent misses are capped by `MAX_CONCURRENT_SPOOLS` (default 3).
+
+### 6. Point clients at the mirror
+
+**Existing servers** (rewrites apt/dnf/apk/pacman where possible; optional EPEL / cPanel hosts):
+
+```bash
+curl -fsSL https://mirror.example.com/switch-mirror.sh | sudo bash
+# flags: --dry-run --epel --cpanel-hosts --no-makecache
+```
+
+**First boot / cloud-init** and per-OS snippets: [docs/cloud-init.md](docs/cloud-init.md) (also https://mirror.scalewithus.com/guides on the production host).
+
+Examples:
 
 ```yaml
+# Ubuntu cloud-init
 #cloud-config
 apt:
   primary:
     - arches: [default]
-      uri: https://mirror.scalewithus.com/ubuntu
+      uri: https://mirror.example.com/ubuntu
   security:
     - arches: [default]
-      uri: https://mirror.scalewithus.com/ubuntu-security
+      uri: https://mirror.example.com/ubuntu-security
 ```
-
-### Ubuntu (arm64 / ports) — cloud-init
-
-```yaml
-#cloud-config
-apt:
-  primary:
-    - arches: [arm64, armhf, ppc64el, riscv64, s390x]
-      uri: https://mirror.scalewithus.com/ubuntu-ports
-    - arches: [default]
-      uri: https://mirror.scalewithus.com/ubuntu
-  security:
-    - arches: [arm64, armhf, ppc64el, riscv64, s390x]
-      uri: https://mirror.scalewithus.com/ubuntu-ports
-    - arches: [default]
-      uri: https://mirror.scalewithus.com/ubuntu-security
-```
-
-### Debian — `sources.list`
 
 ```text
-deb https://mirror.scalewithus.com/debian bookworm main contrib non-free non-free-firmware
-deb https://mirror.scalewithus.com/debian bookworm-updates main contrib non-free non-free-firmware
-deb https://mirror.scalewithus.com/debian-security bookworm-security main contrib non-free non-free-firmware
+# Debian sources.list
+deb https://mirror.example.com/debian bookworm main contrib non-free non-free-firmware
+deb https://mirror.example.com/debian bookworm-updates main contrib non-free non-free-firmware
+deb https://mirror.example.com/debian-security bookworm-security main contrib non-free non-free-firmware
 ```
-
-Adjust the suite (`bookworm`, `trixie`, etc.) for your release.
-
-### Rocky Linux — drop-in repo (example BaseOS)
 
 ```ini
-[baseos]
-name=Rocky Linux $releasever - BaseOS
-baseurl=https://mirror.scalewithus.com/rocky/$releasever/BaseOS/$basearch/os/
-gpgcheck=1
-enabled=1
-mirrorlist=
-metalink=
+# Alma / Rocky — set explicit baseurl; clear mirrorlist/metalink
+baseurl=https://mirror.example.com/almalinux/$releasever/BaseOS/$basearch/os/
 ```
-
-EPEL:
-
-```ini
-[epel]
-name=Extra Packages for Enterprise Linux $releasever
-baseurl=https://mirror.scalewithus.com/epel/$releasever/Everything/$basearch/
-gpgcheck=1
-enabled=1
-mirrorlist=
-metalink=
-```
-
-### AlmaLinux
-
-```ini
-[baseos]
-name=AlmaLinux $releasever - BaseOS
-baseurl=https://mirror.scalewithus.com/almalinux/$releasever/BaseOS/$basearch/os/
-gpgcheck=1
-enabled=1
-mirrorlist=
-metalink=
-```
-
-### CentOS Stream
-
-```ini
-[baseos]
-name=CentOS Stream $releasever - BaseOS
-baseurl=https://mirror.scalewithus.com/centos-stream/$releasever/BaseOS/$basearch/os/
-gpgcheck=1
-enabled=1
-metalink=
-```
-
-`$releasever` is typically `9-stream` or `10-stream`. Use `/epel/` for EPEL.
-
-### Arch Linux — `mirrorlist`
 
 ```text
-Server = https://mirror.scalewithus.com/archlinux/$repo/os/$arch
+# cPanel — Option A (dedicated hostname in /etc/cpsources.conf)
+HTTPUPDATE=httpupdate.example.com
+
+# Option B — /etc/hosts on the cPanel server (HTTP only)
+YOUR.MIRROR.IP  httpupdate.cpanel.net
 ```
 
-### Alpine Linux — `/etc/apk/repositories`
+### 7. Day-2 operations
 
-Rewrite CDN hosts (keep the version path), e.g.:
+```bash
+# Redeploy after code or Caddyfile changes
+cd ~/linux-mirror && sudo docker compose up -d --build
 
-```text
-https://mirror.scalewithus.com/alpine/v3.21/main
-https://mirror.scalewithus.com/alpine/v3.21/community
+# Logs
+sudo docker compose logs -f --tail=200 mirror
+sudo docker compose logs -f --tail=200 caddy
+
+# Disk cache size on the host
+sudo du -sh data/cache
+
+# Clear one cached object (forces next request to S3 or upstream)
+sudo rm -f data/cache/ubuntu/dists/noble/InRelease \
+           data/cache/ubuntu/dists/noble/InRelease.ctype
 ```
+
+Caddy renews certificates automatically. Metrics survive container restarts via the `mirror_data` volume. S3 objects remain until you delete them in the bucket (the app does not garbage-collect S3 by default; disk cache LRU-evicts when over budget).
+
+### 8. Security notes for operators
+
+- Keep S3 keys only in `.env` (never commit). Restrict the IAM/key to that bucket.
+- The mirror refuses upstream **redirects** and does not proxy HTML directory indexes.
+- Oversized upstream objects are rejected (`MAX_SPOOL_BYTES`, default 2 GiB).
+- Prefer running behind Caddy as shipped; do not expose `:8080` publicly without an equivalent reverse proxy and rate limits if needed.
 
 ---
 
-## Tunables (environment)
+## Environment reference
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ACME_EMAIL` | `admin@scalewithus.com` | Let's Encrypt account email |
-| `S3_QUOTA_BYTES` | *(unset)* | Bucket capacity; enables S3 free space on `/metrics` |
-| `S3_USAGE_REFRESH_SECONDS` | `300` | How often to re-list the bucket for usage stats |
-| `METRICS_STATE_PATH` | `/var/lib/linux-mirror/metrics.json` | Persisted counter file (Docker volume `mirror_data`) |
-| `METRICS_FLUSH_SECONDS` | `10` | How often dirty counters are flushed to disk |
-| `METADATA_CACHE_SECONDS` | `21600` (6h) | Metadata TTL / revalidation interval |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | *(required)* | S3 credentials |
+| `S3_ENDPOINT` | `https://s3.scalewithus.com` | S3 API base URL |
+| `S3_BUCKET` | `linux-mirrors` | Bucket name |
+| `S3_REGION` | `us-east-1` | Region string for signing |
+| `S3_ADDRESSING` | `path` | `path` or `virtual` |
+| `S3_QUOTA_BYTES` | *(unset)* | Bucket capacity for `/metrics` free space |
+| `S3_USAGE_REFRESH_SECONDS` | `300` | How often to re-list bucket usage |
+| `ACME_EMAIL` | `admin@scalewithus.com` | Let’s Encrypt email (Caddy) |
+| `METADATA_CACHE_SECONDS` | `21600` (6h) | Metadata revalidation interval |
 | `PACKAGE_CACHE_SECONDS` | `15552000` (6 mo) | `Cache-Control` max-age for packages |
 | `NEGATIVE_CACHE_SECONDS` | `60` | Cache upstream 404s |
-| `MAX_SPOOL_BYTES` | `2GiB` | Reject oversized upstream objects |
-| `MAX_CONCURRENT_SPOOLS` | `3` | Cap concurrent upstream→tmp→S3 fetches |
-| `HEAD_CACHE_MAX` | `50000` | In-memory S3 head cache entries (skip HeadObject on hot hits) |
-| `LOCAL_CACHE_DIR` | `/app/data/cache` | Local disk cache root (`./data/cache` on host) |
-| `LOCAL_CACHE_RESERVE_BYTES` | `15GiB` | Free space kept for OS when auto-sizing cache |
-| `LOCAL_CACHE_BYTES` | *(auto)* | Fixed cap; empty = free−reserve; `0` = disable disk cache |
-| `LISTEN` | `:8080` | HTTP listen address (container) |
-| `MIN_TMP_FREE_BYTES` | `512MiB` | Fail miss if `/tmp` is too full |
+| `MAX_SPOOL_BYTES` | `2GiB` | Max upstream object size |
+| `MAX_CONCURRENT_SPOOLS` | `3` | Parallel upstream→S3 fetches |
+| `MIN_TMP_FREE_BYTES` | `512MiB` | Refuse miss if `/tmp` too full |
 | `UPSTREAM_TIMEOUT` | `120` | Upstream HTTP timeout (seconds) |
+| `HEAD_CACHE_MAX` | `50000` | In-memory S3 head cache entries |
+| `LOCAL_CACHE_DIR` | `/app/data/cache` | Disk cache root in container |
+| `LOCAL_CACHE_RESERVE_BYTES` | `15GiB` | Free space kept when auto-sizing |
+| `LOCAL_CACHE_BYTES` | *(auto)* | Fixed cap; empty = free−reserve; `0` = off |
+| `METRICS_STATE_PATH` | `/var/lib/linux-mirror/metrics.json` | Persisted counters |
+| `METRICS_FLUSH_SECONDS` | `10` | Counter flush interval |
+| `LISTEN` | `:8080` | App listen address |
+| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARN` / `ERROR` |
+
+---
+
+## Development (without full TLS)
+
+You can run the Go binary locally against real S3 credentials, but production TLS and host routing are intended via Compose + Caddy:
+
+```bash
+export $(grep -v '^#' .env | xargs)
+go run ./cmd/mirror
+# listen on :8080 — put a reverse proxy in front for HTTPS
+```
+
+Build image only:
+
+```bash
+sudo docker compose build mirror
+```
