@@ -228,11 +228,10 @@ handle_apt() {
   fi
 }
 
-# --- AlmaLinux --------------------------------------------------------------
+# --- AlmaLinux / CloudLinux (Alma base) -------------------------------------
 
-handle_almalinux() {
-  log "Configuring AlmaLinux → $MIRROR/almalinux/"
-
+patch_almalinux_repos() {
+  # Shared by AlmaLinux and CloudLinux (CLN is Alma/RHEL underneath for base OS).
   if [[ -f /etc/yum.repos.d/almalinux.repo ]]; then
     log "Removing combined /etc/yum.repos.d/almalinux.repo (use split almalinux-*.repo)"
     backup_file /etc/yum.repos.d/almalinux.repo
@@ -240,8 +239,10 @@ handle_almalinux() {
   fi
 
   shopt -s nullglob
-  local f
-  for f in /etc/yum.repos.d/almalinux-*.repo; do
+  local f any=0
+  for f in /etc/yum.repos.d/almalinux-*.repo /etc/yum.repos.d/almalinux.repo; do
+    [[ -f "$f" ]] || continue
+    any=1
     backup_file "$f"
     if [[ "$DRY_RUN" -eq 1 ]]; then
       log "DRY-RUN: sed $f"
@@ -252,6 +253,8 @@ handle_almalinux() {
       -e 's|^metalink=|#metalink=|g' \
       -e 's|^# *baseurl=https\?://repo\.almalinux\.org/almalinux|baseurl='"${MIRROR}"'/almalinux|g' \
       -e 's|^baseurl=https\?://repo\.almalinux\.org/almalinux|baseurl='"${MIRROR}"'/almalinux|g' \
+      -e 's|^# *baseurl=https\?://[a-z0-9.-]*\.almalinux\.org/almalinux|baseurl='"${MIRROR}"'/almalinux|g' \
+      -e 's|^baseurl=https\?://[a-z0-9.-]*\.almalinux\.org/almalinux|baseurl='"${MIRROR}"'/almalinux|g' \
       "$f"
   done
   for f in /etc/yum.repos.d/*.rpmnew; do
@@ -259,12 +262,34 @@ handle_almalinux() {
     run rm -f "$f"
   done
   shopt -u nullglob
+  if [[ "$any" -eq 0 ]]; then
+    warn "No almalinux-*.repo files found under /etc/yum.repos.d (CloudLinux native repos are left unchanged)"
+  fi
+}
 
+handle_almalinux() {
+  log "Configuring AlmaLinux → $MIRROR/almalinux/"
+  patch_almalinux_repos
   handle_epel_optional
   if [[ "$NO_MAKECACHE" -eq 0 ]]; then
     log "Running dnf makecache"
     run dnf makecache
   fi
+}
+
+handle_cloudlinux() {
+  # CloudLinux 8/9: Alma-compatible base repos + cPanel FastUpdate when WHM is installed.
+  log "Configuring CloudLinux (Alma base repos) → $MIRROR/almalinux/"
+  patch_almalinux_repos
+  handle_epel_optional
+  if [[ "$NO_MAKECACHE" -eq 0 ]]; then
+    log "Running dnf makecache"
+    run dnf makecache
+  fi
+}
+
+cpanel_present() {
+  [[ -d /usr/local/cpanel ]] || [[ -f /etc/cpsources.conf ]] || [[ -x /usr/local/cpanel/cpanel ]]
 }
 
 # --- Rocky ------------------------------------------------------------------
@@ -424,14 +449,15 @@ handle_cpanel_hosts() {
   log "Pointing httpupdate.cpanel.net → $ip in /etc/hosts"
   backup_file /etc/hosts
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    log "DRY-RUN: append $ip httpupdate.cpanel.net"
+    log "DRY-RUN: set $ip httpupdate.cpanel.net"
     return 0
   fi
-  # Remove prior ScaleWithUs-managed lines, then append
-  sed -i '/# scalewithus-mirror-cpanel$/,+0d' /etc/hosts 2>/dev/null || true
+  # Drop prior ScaleWithUs-managed lines, then set/replace the hosts entry
+  sed -i '/# scalewithus-mirror-cpanel$/d' /etc/hosts 2>/dev/null || true
   sed -i '/[[:space:]]httpupdate\.cpanel\.net[[:space:]]*# scalewithus-mirror/d' /etc/hosts 2>/dev/null || true
-  if grep -qE '[[:space:]]httpupdate\.cpanel\.net([[:space:]]|$)' /etc/hosts; then
-    warn "/etc/hosts already has httpupdate.cpanel.net; leaving existing entry (backup in $BACKUP_DIR)"
+  if grep -qE '^[[:space:]]*[0-9a-fA-F.:]+[[:space:]]+httpupdate\.cpanel\.net([[:space:]]|$)' /etc/hosts; then
+    log "Updating existing httpupdate.cpanel.net hosts entry → $ip"
+    sed -i -E "s|^[[:space:]]*[0-9a-fA-F.:]+[[:space:]]+httpupdate\.cpanel\.net([[:space:]].*)?$|${ip}  httpupdate.cpanel.net  # scalewithus-mirror|" /etc/hosts
   else
     printf '%s  httpupdate.cpanel.net  # scalewithus-mirror\n' "$ip" >>/etc/hosts
   fi
@@ -481,6 +507,9 @@ case "$ID_LOWER" in
   almalinux)
     handle_almalinux
     ;;
+  cloudlinux)
+    handle_cloudlinux
+    ;;
   rocky)
     handle_rocky
     ;;
@@ -500,13 +529,18 @@ case "$ID_LOWER" in
     elif [[ "$LIKE_LOWER" == *debian* ]]; then
       handle_apt debian
     elif [[ "$LIKE_LOWER" == *rhel* || "$LIKE_LOWER" == *fedora* ]]; then
-      die "Unsupported EL variant '$ID'. Supported: almalinux, rocky, centos (Stream). Use a per-OS guide or set repos manually."
+      die "Unsupported EL variant '$ID'. Supported: almalinux, cloudlinux, rocky, centos (Stream). Use a per-OS guide or set repos manually."
     else
       die "Unsupported distro ID='$ID'. See https://${MIRROR_HOST}/guides/switch"
     fi
     ;;
 esac
 
+# Auto-enable cPanel FastUpdate hosts override when WHM/cPanel is installed
+if [[ "$DO_CPANEL_HOSTS" -eq 0 ]] && cpanel_present; then
+  log "cPanel/WHM detected; enabling httpupdate.cpanel.net → mirror IP"
+  DO_CPANEL_HOSTS=1
+fi
 handle_cpanel_hosts
 
 log "Done."

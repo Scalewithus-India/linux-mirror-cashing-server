@@ -38,12 +38,13 @@ Script URL: [https://mirror.scalewithus.com/switch-mirror.sh](https://mirror.sca
 | Ubuntu | `/etc/apt/sources.list` + `sources.list.d` (`.list` and DEB822 `.sources`); ports → `/ubuntu-ports` |
 | Debian | same for Debian / Debian-security URIs |
 | AlmaLinux | removes accidental `almalinux.repo`; sed on `almalinux-*.repo` |
+| CloudLinux | same Alma baseurl rewrite (CLN is Alma/RHEL underneath); native `cloudlinux*.repo` left alone |
 | Rocky Linux | sed on `rocky*.repo` |
 | CentOS (Stream) | metalink/mirrorlist off; baseurl → `/centos-stream/` (or writes `centos-swu.repo`) |
 | Alpine Linux | rewrite Alpine CDN hosts in `/etc/apk/repositories` → `/alpine/` |
 | Arch Linux | `/etc/pacman.d/mirrorlist` |
 
-cPanel FastUpdate is optional via `--cpanel-hosts` (any distro). See [cpanel.md](cpanel.md).
+cPanel FastUpdate: auto-enabled when `/usr/local/cpanel` (or `cpsources.conf`) is present; or force with `--cpanel-hosts`. See [cpanel.md](cpanel.md).
 
 Windows guests: this script does not apply — see [windows.md](windows.md).
 

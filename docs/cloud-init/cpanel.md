@@ -49,15 +49,18 @@ https://mirror.scalewithus.com/cpanel/cpanelsync/
 
 ### One-liner
 
+On CloudLinux / Alma with cPanel, the switcher detects WHM and sets the hosts entry automatically (also rewrites Alma baseurls):
+
 ```bash
-# Point httpupdate.cpanel.net at the mirror IP (HTTP only)
-curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash -s -- --cpanel-hosts --no-makecache
+curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash
+# optional EPEL:
+curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash -s -- --epel
 ```
 
-Also run the distro handler if you want OS packages on this mirror too (omit `--no-makecache`):
+Hosts-only (skip package-manager refresh):
 
 ```bash
-curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash -s -- --cpanel-hosts --epel
+curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash -s -- --cpanel-hosts --no-makecache
 ```
 
 ### Manual
