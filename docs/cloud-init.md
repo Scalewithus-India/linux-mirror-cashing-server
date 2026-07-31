@@ -272,6 +272,37 @@ runcmd:
 
 ---
 
+## cPanel / WHM (FastUpdate)
+
+cPanel’s `HTTPUPDATE` must be a **hostname** (files are fetched from `/cpanelsync/…`, `/RPM/…` at the site root). Use the dedicated vhost (not a `/cpanel` path).
+
+DNS: `httpupdate.scalewithus.com` → same IP as the mirror (port **80** required; HTTPS also works).
+
+On each cPanel server, set `/etc/cpsources.conf`:
+
+```text
+HTTPUPDATE=httpupdate.scalewithus.com
+```
+
+Then:
+
+```bash
+# warm / test
+curl -fsSI http://httpupdate.scalewithus.com/cpanelsync/
+curl -fsSI http://httpupdate.scalewithus.com/RPM/
+/scripts/upcp
+```
+
+Equivalent path on the main host (for debugging only):
+
+```text
+https://mirror.scalewithus.com/cpanel/cpanelsync/
+```
+
+Do **not** put a path in `HTTPUPDATE` (e.g. `mirror.scalewithus.com/cpanel`) — upcp will request `http://host/cpanelsync/…` at the root.
+
+---
+
 ## Quick verify after boot
 
 ```bash

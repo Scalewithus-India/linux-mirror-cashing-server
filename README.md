@@ -16,10 +16,11 @@ Docker service for `https://mirror.scalewithus.com`. Caddy terminates TLS (Let's
 | `/centos-stream/` | mirror.stream.centos.org | CentOS Stream (not EOL CentOS Linux) |
 | `/epel/` | download.fedoraproject.org/pub/epel | for EL clients |
 | `/archlinux/` | geo.mirror.pkgbuild.com | official x86_64 repos |
+| `/cpanel/` | httpupdate.cpanel.net | also `httpupdate.scalewithus.com` (root) |
 
 ## Run (with Let's Encrypt)
 
-1. DNS: `mirror.scalewithus.com` → this host (ports **80** and **443** open).
+1. DNS: `mirror.scalewithus.com` and `httpupdate.scalewithus.com` → this host (ports **80** and **443** open).
 2. Set S3 credentials and `ACME_EMAIL` in `.env`.
 3. Start:
 

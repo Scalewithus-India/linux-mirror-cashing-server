@@ -57,6 +57,8 @@ _UPSTREAMS_RAW: list[tuple[str, str]] = [
     ("/centos-stream/", "https://mirror.stream.centos.org/"),
     ("/archlinux/", "https://geo.mirror.pkgbuild.com/"),
     ("/epel/", "https://download.fedoraproject.org/pub/epel/"),
+    # cPanel FastUpdate / httpupdate tree (also via httpupdate.scalewithus.com → /cpanel/)
+    ("/cpanel/", "https://httpupdate.cpanel.net/"),
 ]
 UPSTREAMS: list[tuple[str, str]] = sorted(_UPSTREAMS_RAW, key=lambda x: len(x[0]), reverse=True)
 
@@ -64,6 +66,7 @@ METADATA_NAME_RE = re.compile(
     r"(InRelease|Release(\.gpg)?|Packages(\.(gz|xz|bz2|zst))?|"
     r"Sources(\.(gz|xz|bz2|zst))?|Contents-.*|repomd\.xml(\.asc)?|"
     r"lastupdate|lastsync|mirrorlist|md5sums|sha256sums|sha512sums|"
+    r"TIERS\.json(\.asc)?|.*\.digest\.list(\.bz2)?|"
     r"index\.html|README)$",
     re.IGNORECASE,
 )

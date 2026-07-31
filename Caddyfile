@@ -2,10 +2,9 @@
 	email {$ACME_EMAIL}
 }
 
-mirror.scalewithus.com {
+(mirror_proxy) {
 	encode zstd gzip
 	reverse_proxy mirror:8080 {
-		# Preserve client IP for uvicorn access logs
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto {scheme}
@@ -18,4 +17,21 @@ mirror.scalewithus.com {
 	header {
 		-Server
 	}
+}
+
+mirror.scalewithus.com {
+	import mirror_proxy
+}
+
+# cPanel HTTPUPDATE= must hit host root (/cpanelsync, /RPM, …).
+# Rewrite to the app's /cpanel/ prefix. Serve plain HTTP (no redirect) because
+# cPanel upcp uses http://HTTPUPDATE/... on port 80.
+http://httpupdate.scalewithus.com {
+	rewrite * /cpanel{uri}
+	import mirror_proxy
+}
+
+httpupdate.scalewithus.com {
+	rewrite * /cpanel{uri}
+	import mirror_proxy
 }
