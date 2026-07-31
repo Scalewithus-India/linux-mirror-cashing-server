@@ -17,5 +17,5 @@ COPY app/main.py .
 
 EXPOSE 8080
 
-# Trust X-Forwarded-For from Caddy on the compose network so access logs show real client IPs
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips=*"]
+# Trust X-Forwarded-For from Caddy; --no-access-log: we log X-Cache ourselves
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips=*", "--no-access-log"]

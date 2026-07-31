@@ -293,6 +293,30 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="ScaleWithUs Linux Mirror", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def access_log_with_cache(request: Request, call_next):
+    response = await call_next(request)
+    # Skip noisy health probes from Docker healthcheck
+    path = request.url.path
+    if path == "/healthz":
+        return response
+    client = request.client.host if request.client else "-"
+    # Prefer first X-Forwarded-For hop when present (Caddy)
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        client = xff.split(",")[0].strip()
+    xcache = response.headers.get("x-cache", "-")
+    log.info(
+        '%s "%s %s" %s %s',
+        client,
+        request.method,
+        path,
+        response.status_code,
+        xcache,
+    )
+    return response
+
+
 @app.get("/healthz")
 async def healthz():
     return {
