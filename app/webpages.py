@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
+import httpx
 import markdown
 from fastapi import Request
 from fastapi.responses import HTMLResponse
@@ -15,6 +18,14 @@ from fastapi.templating import Jinja2Templates
 APP_DIR = Path(__file__).resolve().parent
 DOCS_ROOT = APP_DIR / "docs"
 TEMPLATES_DIR = APP_DIR / "templates"
+
+GITHUB_REPO = "Scalewithus-India/linux-mirror-cashing-server"
+GITHUB_URL = f"https://github.com/{GITHUB_REPO}"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}"
+GITHUB_STARS_TTL = 600  # seconds
+
+log = logging.getLogger("mirror.web")
+_stars_cache: dict[str, Any] = {"count": None, "fetched_at": 0.0}
 
 GUIDES: list[dict[str, str]] = [
     {
@@ -70,17 +81,57 @@ templates.env.filters["fmt_int"] = _fmt_int
 templates.env.filters["fmt_bytes"] = _fmt_bytes
 
 
+def github_stars() -> int | None:
+    """Return cached stargazers_count from GitHub (None if unavailable)."""
+    now = time.monotonic()
+    if (
+        _stars_cache["count"] is not None
+        and (now - float(_stars_cache["fetched_at"])) < GITHUB_STARS_TTL
+    ):
+        return int(_stars_cache["count"])
+    # Serve stale value while refreshing fails
+    stale = _stars_cache["count"]
+    try:
+        with httpx.Client(timeout=4.0) as client:
+            resp = client.get(
+                GITHUB_API_URL,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "scalewithus-linux-mirror",
+                },
+            )
+            resp.raise_for_status()
+            count = int(resp.json().get("stargazers_count") or 0)
+        _stars_cache["count"] = count
+        _stars_cache["fetched_at"] = now
+        return count
+    except Exception as exc:  # noqa: BLE001
+        log.debug("GitHub stars fetch failed: %s", exc)
+        if stale is not None:
+            return int(stale)
+        return None
+
+
+def _base_ctx(**extra: Any) -> dict[str, Any]:
+    return {
+        "github_url": GITHUB_URL,
+        "github_repo": GITHUB_REPO,
+        "github_stars": github_stars(),
+        **extra,
+    }
+
+
 def home_page(request: Request, paths: list[str]) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "home.html",
-        {
-            "title": "Home",
-            "active": "home",
-            "wide": False,
-            "paths": paths,
-            "guides": GUIDES,
-        },
+        _base_ctx(
+            title="Home",
+            active="home",
+            wide=False,
+            paths=paths,
+            guides=GUIDES,
+        ),
     )
 
 
@@ -88,12 +139,12 @@ def guides_index_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "guides_index.html",
-        {
-            "title": "Guides",
-            "active": "guides",
-            "wide": False,
-            "guides": GUIDES,
-        },
+        _base_ctx(
+            title="Guides",
+            active="guides",
+            wide=False,
+            guides=GUIDES,
+        ),
     )
 
 
@@ -138,28 +189,28 @@ def metrics_page(request: Request, snap: dict[str, Any], *, bucket: str) -> HTML
     return templates.TemplateResponse(
         request,
         "metrics.html",
-        {
-            "title": "Metrics",
-            "active": "metrics",
-            "wide": True,
-            "bucket": bucket,
-            "hits": hits,
-            "misses": misses,
-            "hit_pct": hit_pct,
-            "circumference": f"{circumference:.2f}",
-            "offset": f"{offset:.2f}",
-            "bytes_served": int(snap.get("bytes_served") or 0),
-            "inflight": int(snap.get("inflight") or 0),
-            "inflight_peak": int(snap.get("inflight_peak") or 0),
-            "tmp_free": int(snap.get("tmp_free_bytes") or 0),
-            "s3_used": s3_used,
-            "s3_objs": s3_objs,
-            "s3_free_label": s3_free_label,
-            "s3_quota_label": s3_quota_label,
-            "usage_pct": f"{usage_pct:.1f}",
-            "usage_note": usage_note,
-            "details": details,
-        },
+        _base_ctx(
+            title="Metrics",
+            active="metrics",
+            wide=True,
+            bucket=bucket,
+            hits=hits,
+            misses=misses,
+            hit_pct=hit_pct,
+            circumference=f"{circumference:.2f}",
+            offset=f"{offset:.2f}",
+            bytes_served=int(snap.get("bytes_served") or 0),
+            inflight=int(snap.get("inflight") or 0),
+            inflight_peak=int(snap.get("inflight_peak") or 0),
+            tmp_free=int(snap.get("tmp_free_bytes") or 0),
+            s3_used=s3_used,
+            s3_objs=s3_objs,
+            s3_free_label=s3_free_label,
+            s3_quota_label=s3_quota_label,
+            usage_pct=f"{usage_pct:.1f}",
+            usage_note=usage_note,
+            details=details,
+        ),
     )
 
 
@@ -210,11 +261,11 @@ def guide_page(request: Request, slug: str) -> HTMLResponse | None:
     return templates.TemplateResponse(
         request,
         "guide.html",
-        {
-            "title": guide["title"],
-            "active": "guides",
-            "wide": False,
-            "guide": guide,
-            "body_html": _md_to_html(path.read_text(encoding="utf-8")),
-        },
+        _base_ctx(
+            title=guide["title"],
+            active="guides",
+            wide=False,
+            guide=guide,
+            body_html=_md_to_html(path.read_text(encoding="utf-8")),
+        ),
     )

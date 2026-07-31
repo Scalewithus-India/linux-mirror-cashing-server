@@ -1,5 +1,9 @@
 # ScaleWithUs Linux Mirror (on-demand S3 cache)
 
+[![GitHub stars](https://img.shields.io/github/stars/Scalewithus-India/linux-mirror-cashing-server?style=social)](https://github.com/Scalewithus-India/linux-mirror-cashing-server)
+
+Source: [github.com/Scalewithus-India/linux-mirror-cashing-server](https://github.com/Scalewithus-India/linux-mirror-cashing-server)
+
 Docker service for `https://mirror.scalewithus.com`. Caddy terminates TLS (Let's Encrypt); the app caches objects in S3 on demand.
 
 ## Paths
