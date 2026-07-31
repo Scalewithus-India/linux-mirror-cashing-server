@@ -44,6 +44,52 @@ Clients (apt/dnf/apk/pacman/cPanel)
 - One mirror URL for many distros (Ubuntu, Debian, Alma, Rocky, EPEL, Alpine, Arch, CentOS Stream, cPanel FastUpdate).
 - Safe defaults: path normalization, no upstream redirect following, directory listings disabled, package size conflicts treated as immutable, spool size and concurrency caps.
 
+### Compared to other packages / projects
+
+Common alternatives fall into a few buckets. This project sits in the **multi-distro pull-through cache** space, with **S3 + local disk** as the storage model and a small Compose deploy.
+
+| Project | What it is | Typical fit |
+|---------|------------|-------------|
+| [apt-cacher-ng](https://www.unix-ag.uni-kl.de/~bloch/acng/) | Dedicated **APT** caching proxy (Debian/Ubuntu and friends) | LAN apt-only cache; clients often set `Acquire::http::Proxy` |
+| [squid-deb-proxy](https://launchpad.net/squid-deb-proxy) | Squid rules tuned for `.deb` | Avahi/LAN apt cache |
+| [Squid](https://www.squid-cache.org/) / generic nginx `proxy_cache` | General HTTP cache | Flexible, but you invent package-safe TTLs, immutability, and multi-distro rules yourself |
+| [apt-mirror](https://github.com/apt-mirror/apt-mirror) / [debmirror](https://manpages.debian.org/debmirror) | Proactive **full/partial** Debian/Ubuntu mirrors | Offline or “sync everything on a cron”; huge disk + bandwidth |
+| `reposync` / `dnf mirror` / rsync trees | Proactive **RPM** (or whole-tree) mirrors | Same tradeoff for Alma/Rocky/EPEL: completeness vs cost |
+| [Pulp](https://pulpproject.org/) (+ Foreman/Katello) | Content platform (RPM, Deb, containers, …) with sync policies | Large orgs that want RBAC, content views, scheduled syncs |
+| Nexus / Artifactory | Enterprise artifact managers | Company-wide Maven/npm/Docker **and** some Linux repos; heavy ops |
+| DIY nginx + scripts | Custom reverse proxy + wget/rsync | Full control; you own every edge case |
+
+#### How this project is better *for its niche*
+
+| Advantage | vs apt-cacher-ng / squid-deb-proxy | vs apt-mirror / debmirror / reposync | vs Pulp / Nexus / Artifactory | vs raw Squid/nginx |
+|-----------|-------------------------------------|--------------------------------------|-------------------------------|--------------------|
+| **Many ecosystems, one URL** | Those are apt-centric; this ships Ubuntu, Debian, Alma, Rocky, CentOS Stream, EPEL, Alpine, Arch, **and cPanel FastUpdate** under path prefixes | Full mirrors are usually one distro (or one family) per sync job | Those can do multi-format, but not as a tiny “one Compose file” mirror | You must wire every upstream yourself |
+| **On-demand only** | Similar idea for apt | You don’t pay multi‑TB syncs for packages nobody installs | Lighter than standing up Pulp/Katello for “just cache what we use” | Same idea possible, not packaged |
+| **S3 as durable cache** | Usually local disk only; hard to share one cache across hosts or rebuild the VM | Full mirrors rarely use object storage as the hot path | Possible, but more moving parts | DIY |
+| **Local NVMe + S3 tiers** | Single local cache tier | Local tree only | Disk/S3 plugins exist; more complex | DIY |
+| **Mirror-shaped URLs** | Clients often need an **HTTP proxy** setting | Clients point at a mirror URL (same as here) | Repo URLs / content apps | Proxy vs rewrite depends on setup |
+| **TLS + host routing included** | Extra work (or HTTP-only LAN) | You add a web server | Built-in or separate | You configure it |
+| **Package-aware defaults** | Good for apt; weak elsewhere | Sync tools don’t “serve smart”; they copy | Rich policies; heavier | Easy to cache HTML indexes or follow bad redirects |
+| **Hardened pull-through** | Mature, but not this threat model | N/A (not a reverse proxy) | Enterprise hardening, different threat model | Easy to misconfigure |
+| **Ops surface** | `apt install` on Debian — great for apt-only LANs | Cron + terabytes + apache/nginx | Multi-service platform | Config sprawl |
+
+Concrete behaviours that matter in production:
+
+- **Disk → S3 → upstream** with clear `X-Cache` headers (`HIT-DISK` / `HIT-S3` / `MISS-STORED`) for debugging.
+- **Metadata vs package TTLs** (revalidate indexes; treat packages as immutable).
+- **Refuses upstream redirects**, disables directory listings, caps spool size and concurrent upstream fetches.
+- **cPanel**: hostname rewrite so FastUpdate can use `HTTPUPDATE=` or a hosts override (not something apt-cacher-ng covers).
+- **Client switcher** (`switch-mirror.sh`) + cloud-init docs for live fleets.
+
+#### When to pick something else
+
+| Choose… | When… |
+|---------|--------|
+| **apt-cacher-ng** | You only care about Debian/Ubuntu on a LAN and want the smallest apt-specific install |
+| **apt-mirror / rsync / reposync** | You need a **complete** offline/air-gapped tree, not “what was requested” |
+| **Pulp / Katello / Nexus** | You need content lifecycle, RBAC, promotion between environments, or many non-OS artifact types |
+| **This repo** | You want a **public or private multi-distro HTTPS mirror**, S3-backed, on-demand, Compose-deployable, including RPM/apk/pacman/cPanel — without running a full content platform |
+
 ### Request path layout
 
 Public URLs use a prefix per distro. That prefix maps to an official upstream base URL. S3 object keys match the public path **without** a leading slash (for example `ubuntu/dists/noble/InRelease`).
