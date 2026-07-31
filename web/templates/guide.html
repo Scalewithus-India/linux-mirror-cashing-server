@@ -1,0 +1,36 @@
+{{define "guide.html"}}
+{{template "doc_start" .}}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/ini.min.js"></script>
+</head>
+{{template "nav" .}}
+<article class="animate-rise py-8 pb-14">
+  <div class="mb-4 text-sm text-muted">
+    <a href="/guides" class="text-accent no-underline hover:text-[#7dffc0]">Guides</a>
+    <span> / {{.Guide.Title}}</span>
+  </div>
+  <div class="guide-md prose prose-invert max-w-3xl prose-headings:font-display prose-a:text-accent prose-code:font-mono prose-pre:bg-code prose-pre:border prose-pre:border-line">
+    {{.BodyHTML}}
+  </div>
+</article>
+    <footer class="mt-8 border-t border-line py-5 text-sm text-muted">
+      On-demand S3 cache ·
+      <a class="text-accent underline-offset-2 hover:text-[#7dffc0]" href="https://mirror.scalewithus.com">mirror.scalewithus.com</a>
+      ·
+      <a class="text-accent underline-offset-2 hover:text-[#7dffc0]" href="{{.GithubURL}}" target="_blank" rel="noopener noreferrer">{{.GithubRepo}}</a>
+      {{if .GithubStars}} · ★ {{.GithubStars}}{{end}}
+    </footer>
+  </div>
+  <script src="/static/js/site.js"></script>
+  <script>
+    if (window.hljs) {
+      document.querySelectorAll("pre code").forEach(function (el) {
+        hljs.highlightElement(el);
+      });
+    }
+  </script>
+</body>
+</html>
+{{end}}

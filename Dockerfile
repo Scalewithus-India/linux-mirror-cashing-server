@@ -1,25 +1,23 @@
-FROM python:3.12-slim
+FROM golang:1.22-alpine AS build
+RUN apk add --no-cache ca-certificates git
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mirror ./cmd/mirror
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates wget
 WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY app/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app/main.py app/webpages.py ./
-COPY app/templates ./templates
-COPY app/static ./static
-COPY docs ./docs
-COPY scripts ./scripts
-
+COPY --from=build /out/mirror /app/mirror
+COPY web /app/web
+COPY docs /app/docs
+COPY scripts /app/scripts
+ENV WEB_ROOT=/app/web \
+    DOCS_ROOT=/app/docs \
+    SCRIPTS_ROOT=/app/scripts \
+    LISTEN=:8080
 EXPOSE 8080
-
-# Trust X-Forwarded-For from Caddy; --no-access-log: we log X-Cache ourselves
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips=*", "--no-access-log"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
+CMD ["/app/mirror"]

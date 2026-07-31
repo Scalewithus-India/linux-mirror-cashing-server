@@ -15,7 +15,8 @@ services:
       METADATA_CACHE_SECONDS: ${METADATA_CACHE_SECONDS:-21600}
       PACKAGE_CACHE_SECONDS: ${PACKAGE_CACHE_SECONDS:-15552000}
       NEGATIVE_CACHE_SECONDS: ${NEGATIVE_CACHE_SECONDS:-60}
-      MAX_SPOOL_BYTES: ${MAX_SPOOL_BYTES:-4294967296}
+      MAX_SPOOL_BYTES: ${MAX_SPOOL_BYTES:-2147483648}
+      MAX_CONCURRENT_SPOOLS: ${MAX_CONCURRENT_SPOOLS:-3}
       MIN_TMP_FREE_BYTES: ${MIN_TMP_FREE_BYTES:-536870912}
       S3_QUOTA_BYTES: ${S3_QUOTA_BYTES:-}
       METRICS_STATE_PATH: ${METRICS_STATE_PATH:-/var/lib/linux-mirror/metrics.json}
@@ -28,7 +29,7 @@ services:
     tmpfs:
       - /tmp:size=8g
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

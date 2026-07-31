@@ -4,7 +4,7 @@
 
 Source: [github.com/Scalewithus-India/linux-mirror-cashing-server](https://github.com/Scalewithus-India/linux-mirror-cashing-server)
 
-Docker service for `https://mirror.scalewithus.com`. Caddy terminates TLS (Let's Encrypt); the app caches objects in S3 on demand.
+Docker service for `https://mirror.scalewithus.com`. Caddy terminates TLS (Let's Encrypt); a Go mirror process caches objects in S3 on demand (same key layout as the previous Python service, so existing cache remains valid).
 
 ## Paths
 
@@ -41,7 +41,16 @@ Caddy obtains and renews the certificate automatically. Cert data lives in the `
 
 HTTP on port 80 is used for ACME challenges and redirects to HTTPS.
 
-Response header `X-Cache` values include `HIT-S3`, `MISS-STORED`, `NEGATIVE`, `BYPASS-DIR` for debugging. Metrics: `https://mirror.scalewithus.com/metrics`.
+Response header `X-Cache` values include `HIT-S3`, `MISS-STORED`, `NEGATIVE`, `DIR-DISABLED` for debugging. Metrics: `https://mirror.scalewithus.com/metrics`.
+
+### Layout
+
+| Path | Role |
+|------|------|
+| `cmd/mirror/` | Process entrypoint |
+| `internal/{config,upstream,store,mirror,metrics,web}/` | Config, S3, cache logic, site |
+| `web/{templates,static}/` | HTML + assets |
+| `docs/`, `scripts/` | Guides and `switch-mirror.sh` |
 
 ---
 
@@ -177,6 +186,9 @@ https://mirror.scalewithus.com/alpine/v3.21/community
 | `METADATA_CACHE_SECONDS` | `21600` (6h) | Metadata TTL / revalidation interval |
 | `PACKAGE_CACHE_SECONDS` | `15552000` (6 mo) | `Cache-Control` max-age for packages |
 | `NEGATIVE_CACHE_SECONDS` | `60` | Cache upstream 404s |
-| `MAX_SPOOL_BYTES` | `4GiB` | Reject oversized upstream objects |
+| `MAX_SPOOL_BYTES` | `2GiB` | Reject oversized upstream objects |
+| `MAX_CONCURRENT_SPOOLS` | `3` | Cap concurrent upstream→tmp→S3 fetches |
+| `HEAD_CACHE_MAX` | `50000` | In-memory S3 head cache entries (skip HeadObject on hot hits) |
+| `LISTEN` | `:8080` | HTTP listen address (container) |
 | `MIN_TMP_FREE_BYTES` | `512MiB` | Fail miss if `/tmp` is too full |
 | `UPSTREAM_TIMEOUT` | `120` | Upstream HTTP timeout (seconds) |

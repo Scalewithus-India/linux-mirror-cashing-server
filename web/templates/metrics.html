@@ -1,103 +1,109 @@
-{% extends "base.html" %}
-{% block content %}
+{{define "metrics.html"}}
+{{template "doc_start" .}}
+</head>
+{{template "nav" .}}
 <section class="animate-rise py-10 pb-4">
   <h1 class="font-display text-[clamp(2rem,4vw,2.8rem)] font-medium tracking-tight">Live metrics</h1>
   <p class="mt-2 text-muted">
-    Bucket <code id="m-bucket" class="font-mono text-sm text-accent">{{ bucket }}</code>
+    Bucket <code id="m-bucket" class="font-mono text-sm text-accent">{{.Bucket}}</code>
     · auto-refresh every 5s · raw JSON at
     <a class="text-accent hover:text-[#7dffc0]" href="/api/metrics">/api/metrics</a>
   </p>
 </section>
-
 <section class="animate-rise grid gap-4 pb-12">
   <div class="grid gap-4 md:grid-cols-[minmax(10rem,14rem)_1fr]">
     <div class="flex flex-col items-center justify-center gap-2 rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-5">
-      <div class="relative h-34 w-34 h-[8.5rem] w-[8.5rem]">
+      <div class="relative h-[8.5rem] w-[8.5rem]">
         <svg class="h-full w-full -rotate-90" viewBox="0 0 100 100" aria-hidden="true">
           <circle class="fill-none stroke-[#1c2b23]" cx="50" cy="50" r="42" stroke-width="10"></circle>
           <circle id="m-ring" class="fill-none stroke-accent transition-[stroke-dashoffset] duration-500" cx="50" cy="50" r="42"
             stroke-width="10" stroke-linecap="round"
-            stroke-dasharray="{{ circumference }}"
-            stroke-dashoffset="{{ offset }}"></circle>
+            stroke-dasharray="{{.Circumference}}"
+            stroke-dashoffset="{{.Offset}}"></circle>
         </svg>
-        <div id="m-hit-pct" class="absolute inset-0 flex items-center justify-center font-display text-[clamp(1.15rem,2.4vw,1.65rem)] font-medium tracking-tight">{{ hit_pct|round(0)|int }}%</div>
+        <div id="m-hit-pct" class="absolute inset-0 flex items-center justify-center font-display text-[clamp(1.15rem,2.4vw,1.65rem)] font-medium tracking-tight">{{.HitPct}}%</div>
       </div>
       <div class="text-center text-xs text-muted">S3 hit rate</div>
     </div>
-
     <div class="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-3">
       <div class="rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-4">
         <div class="text-xs uppercase tracking-wider text-muted">S3 hits</div>
-        <div class="mt-1 font-mono text-xl text-accent" id="m-hits">{{ hits|fmt_int }}</div>
+        <div class="mt-1 font-mono text-xl text-accent" id="m-hits">{{.HitsFmt}}</div>
       </div>
       <div class="rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-4">
         <div class="text-xs uppercase tracking-wider text-muted">Misses stored</div>
-        <div class="mt-1 font-mono text-xl" id="m-misses">{{ misses|fmt_int }}</div>
+        <div class="mt-1 font-mono text-xl" id="m-misses">{{.MissesFmt}}</div>
       </div>
       <div class="rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-4">
         <div class="text-xs uppercase tracking-wider text-muted">Bytes served</div>
-        <div class="mt-1 font-mono text-xl" id="m-bytes">{{ bytes_served|fmt_bytes }}</div>
+        <div class="mt-1 font-mono text-xl" id="m-bytes">{{.BytesFmt}}</div>
       </div>
       <div class="rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-4">
         <div class="text-xs uppercase tracking-wider text-muted">In-flight</div>
-        <div class="mt-1 font-mono text-xl" id="m-inflight">{{ inflight|fmt_int }}</div>
+        <div class="mt-1 font-mono text-xl" id="m-inflight">{{.InflightFmt}}</div>
       </div>
       <div class="rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-4">
         <div class="text-xs uppercase tracking-wider text-muted">In-flight peak</div>
-        <div class="mt-1 font-mono text-xl" id="m-peak">{{ inflight_peak|fmt_int }}</div>
+        <div class="mt-1 font-mono text-xl" id="m-peak">{{.PeakFmt}}</div>
       </div>
       <div class="rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-4">
         <div class="text-xs uppercase tracking-wider text-muted">Tmp free</div>
-        <div class="mt-1 font-mono text-xl" id="m-tmp">{{ tmp_free|fmt_bytes }}</div>
+        <div class="mt-1 font-mono text-xl" id="m-tmp">{{.TmpFmt}}</div>
       </div>
     </div>
   </div>
-
   <div class="rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-4">
     <h2 class="mb-3 font-display text-xl font-medium tracking-tight">S3 storage</h2>
     <div class="mb-3 grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-3">
       <div>
         <div class="text-xs uppercase tracking-wider text-muted">Used</div>
-        <div class="mt-1 font-mono text-lg text-accent" id="m-s3-used">{{ s3_used|fmt_bytes }}</div>
+        <div class="mt-1 font-mono text-lg text-accent" id="m-s3-used">{{.S3UsedFmt}}</div>
       </div>
       <div>
         <div class="text-xs uppercase tracking-wider text-muted">Available</div>
-        <div class="mt-1 font-mono text-lg" id="m-s3-free">{{ s3_free_label }}</div>
+        <div class="mt-1 font-mono text-lg" id="m-s3-free">{{.S3FreeLabel}}</div>
       </div>
       <div>
         <div class="text-xs uppercase tracking-wider text-muted">Quota</div>
-        <div class="mt-1 font-mono text-lg" id="m-s3-quota">{{ s3_quota_label }}</div>
+        <div class="mt-1 font-mono text-lg" id="m-s3-quota">{{.S3QuotaLabel}}</div>
       </div>
       <div>
         <div class="text-xs uppercase tracking-wider text-muted">Objects</div>
-        <div class="mt-1 font-mono text-lg" id="m-s3-objs">{{ s3_objs|fmt_int }}</div>
+        <div class="mt-1 font-mono text-lg" id="m-s3-objs">{{.S3ObjsFmt}}</div>
       </div>
     </div>
     <div class="h-1.5 overflow-hidden rounded-full bg-[#1c2b23]">
-      <div id="m-s3-bar" class="h-full rounded-full bg-gradient-to-r from-accent-dim to-accent transition-all duration-500" style="width: {{ usage_pct }}%"></div>
+      <div id="m-s3-bar" class="h-full rounded-full bg-gradient-to-r from-accent-dim to-accent transition-all duration-500" style="width: {{.UsagePct}}%"></div>
     </div>
-    <p class="mt-2 text-sm text-muted" id="m-s3-note">{{ usage_note }}</p>
+    <p class="mt-2 text-sm text-muted" id="m-s3-note">{{.UsageNote}}</p>
   </div>
-
   <div>
     <h2 class="mb-3 font-display text-xl font-medium tracking-tight">Cache mix</h2>
     <div class="h-1.5 overflow-hidden rounded-full bg-[#1c2b23]">
-      <div id="m-bar" class="h-full rounded-full bg-gradient-to-r from-accent-dim to-accent transition-all duration-500" style="width: {{ hit_pct }}%"></div>
+      <div id="m-bar" class="h-full rounded-full bg-gradient-to-r from-accent-dim to-accent transition-all duration-500" style="width: {{.HitPct}}%"></div>
     </div>
-    <p class="mt-2 text-sm text-muted" id="m-mix-note">{{ hits|fmt_int }} hits · {{ misses|fmt_int }} misses stored</p>
+    <p class="mt-2 text-sm text-muted" id="m-mix-note">{{.MixNote}}</p>
   </div>
-
   <div class="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
-    {% for item in details %}
+    {{range .Details}}
     <div class="rounded-lg border border-line bg-[rgba(8,14,11,0.55)] p-4">
-      <div class="text-xs uppercase tracking-wider text-muted">{{ item.label }}</div>
-      <div class="mt-1 font-mono text-xl {% if item.tone == 'danger' %}text-danger{% elif item.tone == 'warn' %}text-warn{% endif %}" id="{{ item.id }}">{{ item.value }}</div>
+      <div class="text-xs uppercase tracking-wider text-muted">{{.Label}}</div>
+      <div class="mt-1 font-mono text-xl {{if eq .Tone "danger"}}text-danger{{else if eq .Tone "warn"}}text-warn{{end}}" id="{{.ID}}">{{.Value}}</div>
     </div>
-    {% endfor %}
+    {{end}}
   </div>
 </section>
-{% endblock %}
-{% block scripts %}
-<script>window.__METRICS_CIRC__ = {{ circumference }};</script>
-<script src="/static/js/metrics.js"></script>
-{% endblock %}
+    <footer class="mt-8 border-t border-line py-5 text-sm text-muted">
+      On-demand S3 cache ·
+      <a class="text-accent underline-offset-2 hover:text-[#7dffc0]" href="https://mirror.scalewithus.com">mirror.scalewithus.com</a>
+      ·
+      <a class="text-accent underline-offset-2 hover:text-[#7dffc0]" href="{{.GithubURL}}" target="_blank" rel="noopener noreferrer">{{.GithubRepo}}</a>
+      {{if .GithubStars}} · ★ {{.GithubStars}}{{end}}
+    </footer>
+  </div>
+  <script src="/static/js/site.js"></script>
+  <script>window.__METRICS_CIRC__ = {{.Circumference}};</script>
+  <script src="/static/js/metrics.js"></script>
+</body>
+</html>
+{{end}}

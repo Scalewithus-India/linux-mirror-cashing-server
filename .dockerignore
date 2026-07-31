@@ -1,7 +1,5 @@
-.env
 .git
-.gitignore
-README.md
-**/__pycache__
-**/*.pyc
-.venv
+.env
+.cursor
+*.pyc
+__pycache__
