@@ -1,0 +1,21 @@
+{
+	email {$ACME_EMAIL}
+}
+
+mirror.scalewithus.com {
+	encode zstd gzip
+	reverse_proxy mirror:8080 {
+		# Preserve client IP for uvicorn access logs
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+	header {
+		-Server
+	}
+}

@@ -1,0 +1,51 @@
+services:
+  mirror:
+    build: .
+    image: scalewithus/linux-mirror:latest
+    container_name: linux-mirror
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      S3_ENDPOINT: ${S3_ENDPOINT:-https://s3.scalewithus.com}
+      S3_BUCKET: ${S3_BUCKET:-linux-mirrors}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ADDRESSING: ${S3_ADDRESSING:-path}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      METADATA_CACHE_SECONDS: ${METADATA_CACHE_SECONDS:-21600}
+      PACKAGE_CACHE_SECONDS: ${PACKAGE_CACHE_SECONDS:-15552000}
+      NEGATIVE_CACHE_SECONDS: ${NEGATIVE_CACHE_SECONDS:-60}
+      MAX_SPOOL_BYTES: ${MAX_SPOOL_BYTES:-4294967296}
+      MIN_TMP_FREE_BYTES: ${MIN_TMP_FREE_BYTES:-536870912}
+    # Only reachable on the compose network; Caddy publishes 80/443
+    expose:
+      - "8080"
+    tmpfs:
+      - /tmp:size=8g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: linux-mirror-caddy
+    restart: unless-stopped
+    depends_on:
+      mirror:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:-admin@scalewithus.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:
