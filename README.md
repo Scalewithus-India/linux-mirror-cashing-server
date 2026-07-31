@@ -16,7 +16,7 @@ Docker service for `https://mirror.scalewithus.com`. Caddy terminates TLS (Let's
 | `/centos-stream/` | mirror.stream.centos.org | CentOS Stream (not EOL CentOS Linux) |
 | `/epel/` | download.fedoraproject.org/pub/epel | for EL clients |
 | `/archlinux/` | geo.mirror.pkgbuild.com | official x86_64 repos |
-| `/cpanel/` | httpupdate.cpanel.net | also `httpupdate.scalewithus.com` (root) |
+| `/cpanel/` | httpupdate.cpanel.net | also `httpupdate.scalewithus.com` or hosts→`httpupdate.cpanel.net` |
 
 ## Run (with Let's Encrypt)
 

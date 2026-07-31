@@ -35,3 +35,10 @@ httpupdate.scalewithus.com {
 	rewrite * /cpanel{uri}
 	import mirror_proxy
 }
+
+# Hosts-file / private-DNS override: point httpupdate.cpanel.net → this IP.
+# HTTP only — do not enable HTTPS here (we cannot obtain a cert for cpanel.net).
+http://httpupdate.cpanel.net {
+	rewrite * /cpanel{uri}
+	import mirror_proxy
+}

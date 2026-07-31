@@ -274,26 +274,39 @@ runcmd:
 
 ## cPanel / WHM (FastUpdate)
 
-cPanel’s `HTTPUPDATE` must be a **hostname** (files are fetched from `/cpanelsync/…`, `/RPM/…` at the site root). Use the dedicated vhost (not a `/cpanel` path).
+cPanel’s `HTTPUPDATE` must be a **hostname** (files are fetched from `/cpanelsync/…`, `/RPM/…` at the site root). Use a root vhost (not a `/cpanel` path).
 
-DNS: `httpupdate.scalewithus.com` → same IP as the mirror (port **80** required; HTTPS also works).
+### Option A — dedicated hostname
 
-On each cPanel server, set `/etc/cpsources.conf`:
+DNS: `httpupdate.scalewithus.com` → same IP as the mirror (port **80**; HTTPS also works on this name).
 
 ```text
+# /etc/cpsources.conf
 HTTPUPDATE=httpupdate.scalewithus.com
 ```
 
-Then:
+### Option B — hosts entry for official name (no cpsources change)
+
+On the cPanel server, force the official update host to this mirror (HTTP only):
+
+```text
+# /etc/hosts
+103.249.112.156  httpupdate.cpanel.net
+```
+
+Leave default `HTTPUPDATE` alone (or omit `/etc/cpsources.conf`). upcp will request `http://httpupdate.cpanel.net/...` and hit this mirror.
 
 ```bash
-# warm / test
-curl -fsSI http://httpupdate.scalewithus.com/cpanelsync/
-curl -fsSI http://httpupdate.scalewithus.com/RPM/
+# verify hosts override
+getent hosts httpupdate.cpanel.net
+curl -fsSI http://httpupdate.cpanel.net/cpanelsync/
+curl -fsSI http://httpupdate.cpanel.net/RPM/
 /scripts/upcp
 ```
 
-Equivalent path on the main host (for debugging only):
+Do **not** rely on `https://httpupdate.cpanel.net` via hosts — TLS will not match (we cannot issue a cert for `cpanel.net`).
+
+### Debug path on the main mirror host
 
 ```text
 https://mirror.scalewithus.com/cpanel/cpanelsync/
