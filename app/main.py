@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -13,6 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import format_datetime, parsedate_to_datetime
+from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import quote, unquote
 
@@ -21,9 +23,19 @@ import httpx
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
-from webpages import guide_page, guides_index_page, home_page
+from webpages import guide_page, guides_index_page, home_page, metrics_page
+
+def _switch_mirror_script_path() -> Path:
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "scripts" / "switch-mirror.sh", here.parent / "scripts" / "switch-mirror.sh"):
+        if candidate.is_file():
+            return candidate
+    return here / "scripts" / "switch-mirror.sh"
+
+
+SWITCH_MIRROR_SCRIPT = _switch_mirror_script_path()
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -45,6 +57,29 @@ NEGATIVE_CACHE_SECONDS = int(os.getenv("NEGATIVE_CACHE_SECONDS", "60"))
 MAX_SPOOL_BYTES = int(os.getenv("MAX_SPOOL_BYTES", str(4 * 1024**3)))
 # Require this much free space on tmp before starting a spool
 MIN_TMP_FREE_BYTES = int(os.getenv("MIN_TMP_FREE_BYTES", str(512 * 1024**2)))
+# Optional bucket capacity (bytes). When set, metrics show free = quota - used.
+_s3_quota_raw = os.getenv("S3_QUOTA_BYTES", "").strip()
+S3_QUOTA_BYTES: int | None = int(_s3_quota_raw) if _s3_quota_raw else None
+S3_USAGE_REFRESH_SECONDS = int(os.getenv("S3_USAGE_REFRESH_SECONDS", "300"))
+METRICS_STATE_PATH = Path(
+    os.getenv("METRICS_STATE_PATH", "/var/lib/linux-mirror/metrics.json")
+)
+METRICS_FLUSH_SECONDS = float(os.getenv("METRICS_FLUSH_SECONDS", "10"))
+
+# Counters persisted across restarts (runtime gauges are not).
+_METRICS_PERSIST_KEYS = (
+    "hits_s3",
+    "misses_stored",
+    "misses_store_failed",
+    "upstream_errors",
+    "not_found",
+    "negative_hits",
+    "revalidated_304",
+    "range_hits",
+    "package_conflicts",
+    "bytes_served",
+    "inflight_peak",
+)
 
 # Longest-prefix match: public path -> upstream base URL (must end with /)
 # Longer prefixes listed first; also sorted at import for safety.
@@ -58,6 +93,7 @@ _UPSTREAMS_RAW: list[tuple[str, str]] = [
     ("/rocky/", "https://dl.rockylinux.org/pub/rocky/"),
     ("/centos-stream/", "https://mirror.stream.centos.org/"),
     ("/archlinux/", "https://geo.mirror.pkgbuild.com/"),
+    ("/alpine/", "https://dl-cdn.alpinelinux.org/alpine/"),
     ("/epel/", "https://download.fedoraproject.org/pub/epel/"),
     # cPanel FastUpdate / httpupdate tree (also via httpupdate.scalewithus.com → /cpanel/)
     ("/cpanel/", "https://httpupdate.cpanel.net/"),
@@ -69,6 +105,7 @@ METADATA_NAME_RE = re.compile(
     r"Sources(\.(gz|xz|bz2|zst))?|Contents-.*|repomd\.xml(\.asc)?|"
     r"lastupdate|lastsync|mirrorlist|md5sums|sha256sums|sha512sums|"
     r"TIERS\.json(\.asc)?|.*\.digest\.list(\.bz2)?|"
+    r"APKINDEX\.tar\.gz|"
     r"index\.html|README)$",
     re.IGNORECASE,
 )
@@ -99,6 +136,7 @@ class Metrics:
     package_conflicts: int = 0
     bytes_served: int = 0
     inflight_peak: int = 0
+    dirty: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def incr(self, name: str, n: int = 1) -> None:
@@ -107,6 +145,7 @@ class Metrics:
             cur = len(_inflight)
             if cur > self.inflight_peak:
                 self.inflight_peak = cur
+            self.dirty = True
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -126,8 +165,131 @@ class Metrics:
             "validated_entries": len(_validated_at),
         }
 
+    def persistable(self) -> dict[str, Any]:
+        return {k: int(getattr(self, k)) for k in _METRICS_PERSIST_KEYS}
+
+    def load_from_disk(self, path: Path) -> bool:
+        if not path.is_file():
+            return False
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning("Failed to load metrics from %s: %s", path, exc)
+            return False
+        if not isinstance(data, dict):
+            return False
+        for key in _METRICS_PERSIST_KEYS:
+            if key in data:
+                try:
+                    setattr(self, key, int(data[key]))
+                except (TypeError, ValueError):
+                    pass
+        self.dirty = False
+        return True
+
+    def save_to_disk(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = self.persistable()
+        payload["saved_at"] = time.time()
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+        self.dirty = False
+
 
 metrics = Metrics()
+_metrics_flush_task: asyncio.Task[None] | None = None
+
+
+async def _metrics_flush_loop() -> None:
+    while True:
+        await asyncio.sleep(max(1.0, METRICS_FLUSH_SECONDS))
+        try:
+            if metrics.dirty:
+                async with metrics.lock:
+                    if metrics.dirty:
+                        metrics.save_to_disk(METRICS_STATE_PATH)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Metrics flush failed: %s", exc)
+
+
+@dataclass
+class S3Usage:
+    used_bytes: int = 0
+    object_count: int = 0
+    refreshed_at: float = 0.0  # time.time()
+    error: str | None = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+s3_usage = S3Usage()
+_s3_usage_task: asyncio.Task[None] | None = None
+
+
+def s3_usage_snapshot() -> dict[str, Any]:
+    used = s3_usage.used_bytes
+    quota = S3_QUOTA_BYTES
+    free = (quota - used) if quota is not None else None
+    if free is not None and free < 0:
+        free = 0
+    return {
+        "s3_used_bytes": used,
+        "s3_object_count": s3_usage.object_count,
+        "s3_quota_bytes": quota,
+        "s3_free_bytes": free,
+        "s3_usage_refreshed_at": s3_usage.refreshed_at or None,
+        "s3_usage_error": s3_usage.error,
+    }
+
+
+async def refresh_s3_usage() -> None:
+    """List the bucket and sum object sizes (cached; not on the request path)."""
+    assert s3_session is not None
+    used = 0
+    count = 0
+    token: str | None = None
+    try:
+        async with s3_session.client(**s3_client_kwargs()) as s3:
+            while True:
+                kwargs: dict[str, Any] = {"Bucket": S3_BUCKET, "MaxKeys": 1000}
+                if token:
+                    kwargs["ContinuationToken"] = token
+                resp = await s3.list_objects_v2(**kwargs)
+                for obj in resp.get("Contents") or []:
+                    count += 1
+                    used += int(obj.get("Size") or 0)
+                if not resp.get("IsTruncated"):
+                    break
+                token = resp.get("NextContinuationToken")
+        async with s3_usage.lock:
+            s3_usage.used_bytes = used
+            s3_usage.object_count = count
+            s3_usage.refreshed_at = time.time()
+            s3_usage.error = None
+        log.info("S3 usage refreshed: objects=%d bytes=%d", count, used)
+    except Exception as exc:
+        async with s3_usage.lock:
+            s3_usage.error = str(exc)
+        log.warning("S3 usage refresh failed: %s", exc)
+
+
+async def note_s3_store(size: int, *, replaced_size: int | None) -> None:
+    """Adjust cached usage after a successful upload (until next full refresh)."""
+    async with s3_usage.lock:
+        if replaced_size is None:
+            s3_usage.object_count += 1
+            s3_usage.used_bytes += size
+        else:
+            s3_usage.used_bytes += size - int(replaced_size)
+
+
+async def _s3_usage_loop() -> None:
+    while True:
+        try:
+            await refresh_s3_usage()
+        except Exception as exc:
+            log.warning("S3 usage loop error: %s", exc)
+        await asyncio.sleep(max(30, S3_USAGE_REFRESH_SECONDS))
 
 
 def resolve_upstream(path: str) -> tuple[str, str, str] | None:
@@ -273,7 +435,20 @@ def clear_negative(key: str) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global http_client, s3_session
+    global http_client, s3_session, _s3_usage_task, _metrics_flush_task
+    if metrics.load_from_disk(METRICS_STATE_PATH):
+        log.info(
+            "Restored metrics from %s (hits_s3=%d bytes_served=%d)",
+            METRICS_STATE_PATH,
+            metrics.hits_s3,
+            metrics.bytes_served,
+        )
+    else:
+        log.info("No metrics state at %s; starting fresh counters", METRICS_STATE_PATH)
+    _metrics_flush_task = asyncio.create_task(
+        _metrics_flush_loop(), name="metrics-flush"
+    )
+
     http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(UPSTREAM_TIMEOUT, connect=30.0),
         follow_redirects=True,
@@ -286,7 +461,28 @@ async def lifespan(_app: FastAPI):
         log.info("S3 OK endpoint=%s bucket=%s", S3_ENDPOINT, S3_BUCKET)
     except Exception as exc:  # noqa: BLE001
         log.warning("S3 head_bucket failed (will still try per-object): %s", exc)
+    _s3_usage_task = asyncio.create_task(_s3_usage_loop(), name="s3-usage-refresh")
     yield
+    if _s3_usage_task is not None:
+        _s3_usage_task.cancel()
+        try:
+            await _s3_usage_task
+        except asyncio.CancelledError:
+            pass
+        _s3_usage_task = None
+    if _metrics_flush_task is not None:
+        _metrics_flush_task.cancel()
+        try:
+            await _metrics_flush_task
+        except asyncio.CancelledError:
+            pass
+        _metrics_flush_task = None
+    try:
+        async with metrics.lock:
+            metrics.save_to_disk(METRICS_STATE_PATH)
+        log.info("Saved metrics to %s", METRICS_STATE_PATH)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Final metrics save failed: %s", exc)
     await http_client.aclose()
     http_client = None
     s3_session = None
@@ -326,13 +522,26 @@ async def healthz():
         "bucket": S3_BUCKET,
         "tmp_free_bytes": tmp_free_bytes(),
         "inflight": len(_inflight),
+        **s3_usage_snapshot(),
     }
 
 
-@app.get("/metrics")
-async def metrics_endpoint():
+@app.api_route("/metrics", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def metrics_endpoint(request: Request):
     snap = metrics.snapshot()
     snap["tmp_free_bytes"] = tmp_free_bytes()
+    snap.update(s3_usage_snapshot())
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept and "text/html" not in accept:
+        return JSONResponse(snap)
+    return metrics_page(snap, bucket=S3_BUCKET)
+
+
+@app.get("/api/metrics")
+async def metrics_api():
+    snap = metrics.snapshot()
+    snap["tmp_free_bytes"] = tmp_free_bytes()
+    snap.update(s3_usage_snapshot())
     return JSONResponse(snap)
 
 
@@ -348,6 +557,7 @@ async def root(request: Request):
                 "cache": "s3-on-demand",
                 "metrics": "/metrics",
                 "guides": "/guides",
+                "switch_script": "/switch-mirror.sh",
             }
         )
     return home_page([p for p, _ in UPSTREAMS])
@@ -361,7 +571,24 @@ async def api_root():
         "cache": "s3-on-demand",
         "metrics": "/metrics",
         "guides": "/guides",
+        "switch_script": "/switch-mirror.sh",
     }
+
+
+@app.api_route("/switch-mirror.sh", methods=["GET", "HEAD"])
+async def switch_mirror_script():
+    if not SWITCH_MIRROR_SCRIPT.is_file():
+        return Response(
+            status_code=404,
+            content=b"switch-mirror.sh not found\n",
+            media_type="text/plain",
+        )
+    return FileResponse(
+        SWITCH_MIRROR_SCRIPT,
+        media_type="text/x-shellscript",
+        filename="switch-mirror.sh",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @app.api_route("/guides", methods=["GET", "HEAD"], response_class=HTMLResponse)
@@ -576,6 +803,10 @@ async def _upload_spool(
                 await s3.upload_fileobj(fh, S3_BUCKET, key, ExtraArgs=extra)
         log.info("CACHED s3://%s/%s (%d bytes)", S3_BUCKET, key, size)
         await metrics.incr("misses_stored")
+        replaced = None
+        if existing_head is not None and existing_head.get("ContentLength") is not None:
+            replaced = int(existing_head["ContentLength"])
+        await note_s3_store(size, replaced_size=replaced)
         clear_negative(key)
         if is_metadata_key(key):
             _validated_at[key] = time.monotonic()

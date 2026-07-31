@@ -17,9 +17,14 @@ services:
       NEGATIVE_CACHE_SECONDS: ${NEGATIVE_CACHE_SECONDS:-60}
       MAX_SPOOL_BYTES: ${MAX_SPOOL_BYTES:-4294967296}
       MIN_TMP_FREE_BYTES: ${MIN_TMP_FREE_BYTES:-536870912}
+      S3_QUOTA_BYTES: ${S3_QUOTA_BYTES:-}
+      METRICS_STATE_PATH: ${METRICS_STATE_PATH:-/var/lib/linux-mirror/metrics.json}
+      METRICS_FLUSH_SECONDS: ${METRICS_FLUSH_SECONDS:-10}
     # Only reachable on the compose network; Caddy publishes 80/443
     expose:
       - "8080"
+    volumes:
+      - mirror_data:/var/lib/linux-mirror
     tmpfs:
       - /tmp:size=8g
     healthcheck:
@@ -47,5 +52,6 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 volumes:
+  mirror_data:
   caddy_data:
   caddy_config:

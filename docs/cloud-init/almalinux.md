@@ -323,12 +323,23 @@ runcmd:
   - dnf -y makecache
 ```
 
-## Fix an already-booted Alma VM
+## Live server
+
+### One-liner
+
+```bash
+curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash
+# optional EPEL:
+curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash -s -- --epel
+```
+
+### Manual
+
+Do **not** create a combined `almalinux.repo` — it duplicates `baseos` / `appstream` / `crb` against the stock split files.
 
 ```bash
 rm -f /etc/yum.repos.d/almalinux.repo /etc/yum.repos.d/*.rpmnew
 
-# Re-apply write_files from above, or:
 for f in /etc/yum.repos.d/almalinux-*.repo; do
   sed -i \
     -e 's/^mirrorlist=/#mirrorlist=/' \
@@ -341,7 +352,21 @@ done
 dnf clean all && dnf makecache
 ```
 
-## Verify
+### Verify
+
+```bash
+curl -fsS https://mirror.scalewithus.com/healthz
+grep -R '^\[baseos\]\|^\[appstream\]\|^\[crb\]' /etc/yum.repos.d/
+# each ID must appear once
+dnf repolist
+dnf makecache
+```
+
+### Revert
+
+Restore `almalinux-*.repo` from `/var/backups/scalewithus-mirror-*/`, then `dnf makecache`.
+
+## Verify (cloud-init)
 
 ```bash
 cloud-init status --wait

@@ -13,7 +13,8 @@ Docker service for `https://mirror.scalewithus.com`. Caddy terminates TLS (Let's
 | `/debian-security/` | security.debian.org | security pocket |
 | `/almalinux/` | repo.almalinux.org | set explicit baseurl |
 | `/rocky/` | dl.rockylinux.org | set explicit baseurl |
-| `/centos-stream/` | mirror.stream.centos.org | CentOS Stream (not EOL CentOS Linux) |
+| `/centos-stream/` | mirror.stream.centos.org | CentOS Stream 9/10 (not EOL CentOS Linux) |
+| `/alpine/` | dl-cdn.alpinelinux.org/alpine | apk main/community (and edge) |
 | `/epel/` | download.fedoraproject.org/pub/epel | for EL clients |
 | `/archlinux/` | geo.mirror.pkgbuild.com | official x86_64 repos |
 | `/cpanel/` | httpupdate.cpanel.net | also `httpupdate.scalewithus.com` or hosts→`httpupdate.cpanel.net` |
@@ -45,6 +46,14 @@ Response header `X-Cache` values include `HIT-S3`, `MISS-STORED`, `NEGATIVE`, `B
 Full per-OS cloud-init / client snippets: [https://mirror.scalewithus.com/guides](https://mirror.scalewithus.com/guides) (also [docs/cloud-init.md](docs/cloud-init.md)).
 
 Use `https://mirror.scalewithus.com` (TLS via Let's Encrypt).
+
+### Switch an existing server
+
+```bash
+curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash
+```
+
+Optional: `--dry-run`, `--epel`, `--cpanel-hosts`, `--no-makecache`. Details: [https://mirror.scalewithus.com/guides/switch](https://mirror.scalewithus.com/guides/switch).
 
 ### Ubuntu (amd64) — cloud-init
 
@@ -141,6 +150,15 @@ metalink=
 Server = https://mirror.scalewithus.com/archlinux/$repo/os/$arch
 ```
 
+### Alpine Linux — `/etc/apk/repositories`
+
+Rewrite CDN hosts (keep the version path), e.g.:
+
+```text
+https://mirror.scalewithus.com/alpine/v3.21/main
+https://mirror.scalewithus.com/alpine/v3.21/community
+```
+
 ---
 
 ## Tunables (environment)
@@ -148,6 +166,10 @@ Server = https://mirror.scalewithus.com/archlinux/$repo/os/$arch
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ACME_EMAIL` | `admin@scalewithus.com` | Let's Encrypt account email |
+| `S3_QUOTA_BYTES` | *(unset)* | Bucket capacity; enables S3 free space on `/metrics` |
+| `S3_USAGE_REFRESH_SECONDS` | `300` | How often to re-list the bucket for usage stats |
+| `METRICS_STATE_PATH` | `/var/lib/linux-mirror/metrics.json` | Persisted counter file (Docker volume `mirror_data`) |
+| `METRICS_FLUSH_SECONDS` | `10` | How often dirty counters are flushed to disk |
 | `METADATA_CACHE_SECONDS` | `21600` (6h) | Metadata TTL / revalidation interval |
 | `PACKAGE_CACHE_SECONDS` | `15552000` (6 mo) | `Cache-Control` max-age for packages |
 | `NEGATIVE_CACHE_SECONDS` | `60` | Cache upstream 404s |

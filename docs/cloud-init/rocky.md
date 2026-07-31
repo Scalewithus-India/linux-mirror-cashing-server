@@ -37,7 +37,7 @@ runcmd:
       dnf -y makecache
 ```
 
-## Verify
+## Verify (cloud-init)
 
 ```bash
 cloud-init status --wait
@@ -45,3 +45,41 @@ grep -R '^\[baseos\]\|^\[appstream\]\|^\[crb\]' /etc/yum.repos.d/
 dnf repolist
 dnf makecache
 ```
+
+## Live server
+
+### One-liner
+
+```bash
+curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash
+# optional EPEL:
+curl -fsSL https://mirror.scalewithus.com/switch-mirror.sh | sudo bash -s -- --epel
+```
+
+### Manual
+
+```bash
+MIRROR=https://mirror.scalewithus.com
+for f in /etc/yum.repos.d/rocky*.repo; do
+  [ -f "$f" ] || continue
+  sudo sed -i \
+    -e 's/^mirrorlist=/#mirrorlist=/' \
+    -e 's/^metalink=/#metalink=/' \
+    -e "s|^#[[:space:]]*baseurl=https\\?://dl\\.rockylinux\\.org/\\\$contentdir|baseurl=${MIRROR}/rocky|" \
+    -e "s|^baseurl=https\\?://dl\\.rockylinux\\.org/\\\$contentdir|baseurl=${MIRROR}/rocky|" \
+    "$f"
+done
+sudo dnf makecache
+```
+
+### Verify
+
+```bash
+curl -fsS https://mirror.scalewithus.com/healthz
+sudo dnf makecache
+sudo dnf repolist
+```
+
+### Revert
+
+Restore `rocky*.repo` from `/var/backups/scalewithus-mirror-*/`, then `sudo dnf makecache`.
